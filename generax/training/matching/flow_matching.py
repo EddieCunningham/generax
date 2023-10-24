@@ -4,9 +4,9 @@ from jax import random
 from functools import partial
 from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
-from src.training.paths import *
-from src.training.coupling import *
-from src.distributions import *
+from generax.training.paths import *
+from generax.training.coupling import *
+from generax.distributions import *
 
 class FlowMatching():
 

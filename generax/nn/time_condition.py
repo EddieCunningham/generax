@@ -7,6 +7,8 @@ import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 
+__all__ = ['TimeFeatures']
+
 ################################################################################################################
 
 class GaussianFourierProjection(eqx.Module):
@@ -82,7 +84,7 @@ class TimeFeatures(eqx.Module):
                             out_features=self.out_features,
                             key=k3)
 
-  def __call__(self, t: Array):
+  def __call__(self, t: Array) -> Array:
     """**Arguments:**
 
     - `t`: A JAX array with shape `()`.

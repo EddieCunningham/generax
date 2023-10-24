@@ -5,14 +5,14 @@ from functools import partial
 from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
-from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import src.nn.util as util
-from src.flow.base import BijectiveTransform
+import generax.nn.util as util
+from generax.flow.base import BijectiveTransform
 import numpy as np
-from src.nn.flat_net import TimeDependentResNet
-from src.nn.resnet_1d import ResNet1d
-from src.nn.util import RavelParameters
+from generax.nn.resnet_1d import ResNet1d
+from generax.nn.util import RavelParameters
+
+__all__ = ['Coupling']
 
 class Coupling(BijectiveTransform):
   """Parametrize a flow over half of the inputs using the other half.
@@ -128,11 +128,11 @@ class Coupling(BijectiveTransform):
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from src.flow.base import Sequential
-  from src.flow.affine import DenseAffine, ShiftScale
-  from src.flow.reshape import Reverse
-  from src.flow.models import NormalizingFlow
-  from src.distributions import Gaussian
+  from generax.flow.base import Sequential
+  from generax.flow.affine import DenseAffine, ShiftScale
+  from generax.flow.reshape import Reverse
+  from generax.flow.models import NormalizingFlow
+  from generax.distributions import Gaussian
 
   # Turn on x64
   from jax.config import config

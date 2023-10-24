@@ -8,8 +8,12 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
-from src.flow.base import BijectiveTransform, Sequential
-from src.distributions import ProbabilityDistribution
+from generax.flow.base import BijectiveTransform, Sequential
+from generax.distributions import ProbabilityDistribution
+
+__all__ = ['NormalizingFlow',
+           'RealNVP',
+           'NeuralSpline']
 
 ################################################################################################################
 
@@ -107,11 +111,11 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
 
 ################################################################################################################
 
-from src.flow.coupling import Coupling
-from src.flow.affine import ShiftScale, PLUAffine
-from src.flow.reshape import Reverse
-from src.distributions import Gaussian
-from src.flow.spline import RationalQuadraticSpline
+from generax.flow.coupling import Coupling
+from generax.flow.affine import ShiftScale, PLUAffine
+from generax.flow.reshape import Reverse
+from generax.distributions import Gaussian
+from generax.flow.spline import RationalQuadraticSpline
 
 class RealNVP(NormalizingFlow):
 
@@ -138,6 +142,7 @@ class RealNVP(NormalizingFlow):
     for i in range(n_layers):
       layers.append(make_coupling_layer_type())
       layers.append(PLUAffine)
+      layers.append(ShiftScale)
 
     transform = Sequential(*layers, x=x, y=y, key=key, **kwargs)
 

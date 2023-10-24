@@ -9,6 +9,9 @@ from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
 
+__all__ = ['ProbabilityDistribution',
+           'Gaussian']
+
 class ProbabilityDistribution(eqx.Module, ABC):
   """An object that we can sample from and use to evaluate log probabilities.
 

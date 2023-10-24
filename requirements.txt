@@ -1,0 +1,8 @@
+tqdm
+optax
+matplotlib
+jax
+einops
+scikit-learn
+equinox
+diffrax

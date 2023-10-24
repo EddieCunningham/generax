@@ -7,9 +7,14 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import src.nn.util as util
-from src.flow.base import BijectiveTransform
+import generax.nn.util as util
+from generax.flow.base import BijectiveTransform
 import numpy as np
+
+__all__ = ['ShiftScale',
+           'DenseLinear',
+           'DenseAffine',
+           'PLUAffine',]
 
 class ShiftScale(BijectiveTransform):
   """This represents a shift and scale transformation.
@@ -293,7 +298,7 @@ class PLUAffine(BijectiveTransform):
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from src.flow.base import Sequential
+  from generax.flow.base import Sequential
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2, 2, 2))

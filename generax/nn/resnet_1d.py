@@ -5,8 +5,8 @@ import jax.random as random
 from jaxtyping import Array, PRNGKeyArray
 import equinox as eqx
 import jax.numpy as jnp
-from src.nn.time_condition import TimeFeatures
 
+__all__ = ['WeightNormDense', 'ResNet1d']
 
 class WeightNormDense(eqx.Module):
   """Weight normalization parametrized linear layer
@@ -27,7 +27,7 @@ class WeightNormDense(eqx.Module):
      self.W = random.normal(key, shape=(out_size, in_size))*0.05
      W = self.W*jax.lax.rsqrt((self.W**2).sum(axis=1))[:, None]
      x_in = x
-     x = jnp.einsum("ij,bj->bi", W, x)
+     x = jnp.einsum('ij,bj->bi', W, x)
 
      std = jnp.std(x.reshape((-1, x.shape[-1])), axis=0) + 1e-5
      self.g = 1/std

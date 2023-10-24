@@ -8,7 +8,7 @@ import optax
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 import tqdm
-import src.nn.util as util
+import generax.nn.util as util
 import os
 
 class TrainingState(eqx.Module):

@@ -6,10 +6,10 @@ from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
-from src.distributions import ProbabilityDistribution
+from generax.distributions import ProbabilityDistribution
 from jaxtyping import Array, PRNGKeyArray
-import src.nn.util as util
-from src.flow.models import NormalizingFlow
+import generax.nn.util as util
+from generax.flow.models import NormalizingFlow
 
 __all__ = ['max_likelihood']
 
@@ -41,7 +41,7 @@ def max_likelihood(flow: NormalizingFlow,
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from src.flow.models import RealNVP
+  from generax.flow.models import RealNVP
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2))

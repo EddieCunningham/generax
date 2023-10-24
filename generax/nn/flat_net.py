@@ -5,7 +5,7 @@ import jax.random as random
 from jaxtyping import Array, PRNGKeyArray
 import equinox as eqx
 import jax.numpy as jnp
-from src.nn.time_condition import TimeFeatures
+from generax.nn.time_condition import TimeFeatures
 
 class WeightNormDense(eqx.Module):
   """Weight normalization parametrized linear layer

@@ -7,9 +7,11 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import src.nn.util as util
-from src.flow.base import BijectiveTransform
+import generax.nn.util as util
+from generax.flow.base import BijectiveTransform
 import numpy as np
+
+__all__ = ['Reverse',]
 
 class Reverse(BijectiveTransform):
   """Reverse an input

@@ -6,9 +6,12 @@ from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
-from src.distributions import ProbabilityDistribution
+from generax.distributions import ProbabilityDistribution
 from jaxtyping import Array, PRNGKeyArray
-import src.nn.util as util
+import generax.nn.util as util
+
+__all__ = ['BijectiveTransform',
+           'Sequential']
 
 class BijectiveTransform(eqx.Module, ABC):
   """This represents a bijective transformation.  Every bijective transformation

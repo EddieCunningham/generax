@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
 
+__all__ = ['NeuralODE']
+
 class NeuralODE(eqx.Module):
   """Neural ODE"""
 
@@ -190,7 +192,7 @@ if __name__ == "__main__":
   from debug import *
   jax.config.update("jax_enable_x64", True)
   import equinox as eqx
-  from src.nn.flat_net import TimeDependentResNet
+  from generax.nn.flat_net import TimeDependentResNet
 
   # Create some data
   key = random.PRNGKey(0)
