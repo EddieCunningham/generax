@@ -140,7 +140,7 @@ class NeuralODE(eqx.Module):
                                    t0=t0,
                                    t1=t1,
                                    dt0=0.0001,
-                                   y0=(x, jnp.zeros(x.shape[:1])),
+                                   y0=(x, jnp.zeros(1)),
                                    args=params,
                                    adjoint=self.adjoint,
                                    stepsize_controller=self.stepsize_controller,
@@ -157,42 +157,12 @@ class NeuralODE(eqx.Module):
     return z
 
 ################################################################################################################
-################################################################################################################
-# TESTS
-################################################################################################################
-################################################################################################################
-
-def test_basic_run(neural_ode, x):
-  neural_ode(x[0])
-  z = eqx.filter_vmap(neural_ode)(x)
-
-def test_inverse(neural_ode, x):
-  ts = jnp.linspace(0.0, 1.0, 20)
-  z0 = neural_ode(x[0], save_at=ts)
-  x0 = neural_ode(z0[-1], inverse=True, save_at=ts)
-  assert jnp.allclose(z0[-1], x0[-1])
-
-  z = eqx.filter_vmap(neural_ode)(x)
-  x2 = eqx.filter_vmap(partial(neural_ode, inverse=True))(z)
-  assert jnp.allclose(x, x2)
-
-  import pdb; pdb.set_trace()
-
-def test_log_likelihood(neural_ode):
-  pass
-
-def test_trace_estimator(neural_ode):
-  pass
-
-def test_multivariate(neural_ode):
-  pass
-
 
 if __name__ == "__main__":
   from debug import *
   jax.config.update("jax_enable_x64", True)
   import equinox as eqx
-  from generax.nn.flat_net import TimeDependentResNet
+  from generax.nn.resnet_1d import ResNet1d
 
   # Create some data
   key = random.PRNGKey(0)

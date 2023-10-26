@@ -20,8 +20,7 @@ class GaussianFourierProjection(eqx.Module):
                embedding_size: Optional[int] = 16,
                *,
                key: PRNGKeyArray,
-               **kwargs,
-  ):
+               **kwargs):
     """**Arguments**:
 
     - `embedding_size`: The size of the embedding.
@@ -62,8 +61,7 @@ class TimeFeatures(eqx.Module):
                activation: Callable = jax.nn.gelu,
                *,
                key: PRNGKeyArray,
-               **kwargs,
-  ):
+               **kwargs):
     """**Arguments**:
 
     - `embedding_size`: The size of the embedding.

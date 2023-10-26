@@ -6,7 +6,9 @@ from jaxtyping import Array, PRNGKeyArray
 import equinox as eqx
 import jax.numpy as jnp
 
-__all__ = ['WeightNormDense', 'ResNet1d']
+__all__ = ['WeightNormDense',
+           'ResNet1d',
+           'TimeDependentResNet1d']
 
 class WeightNormDense(eqx.Module):
   """Weight normalization parametrized linear layer
@@ -214,19 +216,17 @@ class ResNet1d(eqx.Module):
   hidden_size: int = eqx.field(static=True)
   out_size: int = eqx.field(static=True)
 
-  def __init__(
-      self,
-      in_size: int,
-      working_size: int,
-      hidden_size: int,
-      out_size: int,
-      n_blocks: int,
-      cond_size: Optional[int] = None,
-      activation: Callable = jax.nn.swish,
-      *,
-      key: PRNGKeyArray,
-      **kwargs,
-  ):
+  def __init__(self,
+               in_size: int,
+               working_size: int,
+               hidden_size: int,
+               out_size: int,
+               n_blocks: int,
+               cond_size: Optional[int] = None,
+               activation: Callable = jax.nn.swish,
+               *,
+               key: PRNGKeyArray,
+               **kwargs):
     """**Arguments**:
 
     - `in_size`: The input size.  Output size is the same as in_size.
@@ -266,7 +266,7 @@ class ResNet1d(eqx.Module):
 
   def data_dependent_init(self,
                           x: Array,
-                          y: Array = None,
+                          y: Optional[Array] = None,
                           key: PRNGKeyArray = None) -> eqx.Module:
     """Initialize the parameters of the layer based on the data.
 
@@ -344,6 +344,84 @@ class ResNet1d(eqx.Module):
     # Output projection
     out = self.out_projection(out)
     return out
+
+################################################################################################################
+
+from generax.nn.time_condition import TimeFeatures
+
+class TimeDependentResNet1d(ResNet1d):
+  """A time dependent version of a 1d resnet
+  """
+
+  time_features: TimeFeatures
+
+  def __init__(self,
+               in_size: int,
+               working_size: int,
+               hidden_size: int,
+               out_size: int,
+               n_blocks: int,
+               cond_size: Optional[int] = None,
+               activation: Callable = jax.nn.swish,
+               embedding_size: Optional[int] = 16,
+               out_features: int=8,
+               *,
+               key: PRNGKeyArray,
+               **kwargs):
+    k1, k2 = random.split(key, 2)
+    self.time_features = TimeFeatures(embedding_size=embedding_size,
+                                      out_features=out_features,
+                                      key=k1,
+                                      **kwargs)
+
+    total_cond_size = out_features
+    if cond_size is not None:
+      total_cond_size += cond_size
+
+    super().__init__(in_size=in_size,
+                     working_size=working_size,
+                     hidden_size=hidden_size,
+                     out_size=out_size,
+                     n_blocks=n_blocks,
+                     cond_size=total_cond_size,
+                     activation=activation,
+                     key=k2,
+                     **kwargs)
+
+  def data_dependent_init(self,
+                          t: Array,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> eqx.Module:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `t`: The time to initialize the parameters with.
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert t.ndim == 1
+    h = self.time_features(t)
+    if y is not None:
+      h = jnp.concatenate([h, y], axis=-1)
+    return super().data_dependent_init(x, y=h, key=key)
+
+  def __call__(self,
+               t: Array,
+               x: Array,
+               y: Optional[Array] = None) -> Array:
+    assert t.shape == ()
+
+    h = self.time_features(t)
+    if y is not None:
+      h = jnp.concatenate([h, y], axis=-1)
+
+    return super().__call__(x, y=h)
 
 ################################################################################################################
 
