@@ -1,16 +1,20 @@
-# Generax
-Generax provides implementations of different kinds of generative models.  The library is built on top of [Equinox](https://github.com/patrick-kidger/equinox) which removes the need to worry about keeping track of model parameters.  For example, the following code snippet shows how to create a neural spline flow and sample from it.
+# generax
+generax provides implementations of different kinds of generative models.  The library is built on top of [Equinox](https://github.com/patrick-kidger/equinox) which removes the need to worry about keeping track of model parameters.  For example, the following code snippet shows how to create a neural spline flow and sample from it.
 ```python
 key = random.PRNGKey(0) # JAX random key
 x = ... # some data
 
-# Data dependent initialization
-model = NeuralSpline(x=x,
-                     key=key,
-                     n_layers=3,
-                     n_res_blocks=4,
+# Create a flow model
+model = NeuralSpline(input_shape=x.shape[1:],
+                     n_flow_layers=3,
+                     n_blocks=4,
                      hidden_size=32,
-                     working_size=16)
+                     working_size=16,
+                     n_spline_knots=8,
+                     key=key)
+
+# Data dependent initialization
+model = model.data_dependent_init(x, key=key)
 
 # Sample from the model
 samples = model.sample(key, n_samples=1000)
@@ -20,6 +24,10 @@ log_prob = model.log_prob(x)
 ```
 
 # Installation
+generax is available on pip:
+```bash
+pip install generax
+```
 
 # Roadmap
 ### Implemented
