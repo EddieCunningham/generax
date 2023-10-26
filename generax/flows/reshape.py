@@ -8,7 +8,7 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
 import generax.nn.util as util
-from generax.flow.base import BijectiveTransform
+from generax.flows.base import BijectiveTransform
 import numpy as np
 
 __all__ = ['Reverse',]
@@ -18,22 +18,15 @@ class Reverse(BijectiveTransform):
   """
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
+               input_shape: Tuple[int],
                key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
-          information.  Should also be batched.
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
 
   def __call__(self,

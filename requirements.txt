@@ -6,3 +6,4 @@ einops
 scikit-learn
 equinox
 diffrax
+ott-jax

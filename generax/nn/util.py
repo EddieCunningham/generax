@@ -47,51 +47,6 @@ def whiten(x):
   U, s, VT = jnp.linalg.svd(x, full_matrices=False)
   return jnp.dot(U, VT)
 
-
-class RavelParameters(eqx.Module):
-  """Flatten and concatenate the parameters of a eqx.Module
-  """
-
-  shapes_and_sizes: Sequence[Tuple[Tuple[int], int]] = eqx.field(static=True)
-  flat_params_size: Tuple[int] = eqx.field(static=True)
-  static: Any = eqx.field(static=True)
-  treedef: Any = eqx.field(static=True)
-  indices: np.ndarray = eqx.field(static=True)
-
-  def __init__(self, module):
-
-    # Split the parameters into dynamic and static
-    params, self.static = eqx.partition(module, eqx.is_array)
-
-    # Flatten the parameters so that we can extract its sizes
-    leaves, self.treedef = jax.tree_util.tree_flatten(params)
-
-    # Get the shape and size of each leaf
-    self.shapes_and_sizes = [(leaf.shape, leaf.size) for leaf in leaves]
-
-    # Flatten the parameters
-    flat_params = jnp.concatenate([leaf.ravel() for leaf in leaves])
-
-    # Keep track of the size of the flattened parameters
-    self.flat_params_size = flat_params.size
-
-    # Keep track of the split points for each paramter in the flattened array
-    self.indices = np.cumsum(np.array([0] + [size for _, size in self.shapes_and_sizes]))
-
-  def __call__(self, flat_params: Array) -> eqx.Module:
-    leaves = []
-    for i, (shape, size) in enumerate(self.shapes_and_sizes):
-
-      # Extract each leaf from the flattened parameters and reshape it
-      buffer = flat_params[self.indices[i]: self.indices[i + 1]]
-      leaf = buffer.reshape(shape)
-      leaves.append(leaf)
-
-    # Turn the leaves back into a tree
-    params = jax.tree_util.tree_unflatten(self.treedef, leaves)
-
-    return eqx.combine(params, self.static)
-
 def extract_multiple_batches_from_iterator(it: Iterator,
                                            n_batches: int,
                                            single_batch=False):

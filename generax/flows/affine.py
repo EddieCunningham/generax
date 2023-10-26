@@ -8,7 +8,7 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
 import generax.nn.util as util
-from generax.flow.base import BijectiveTransform
+from generax.flows.base import BijectiveTransform
 import numpy as np
 
 __all__ = ['ShiftScale',
@@ -31,32 +31,51 @@ class ShiftScale(BijectiveTransform):
   b: Array
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
+               input_shape: Tuple[int],
                key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
-          information.  Should also be batched.
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
 
-    assert x.shape[1:] == self.input_shape
+    # Initialize the parameters randomly
+    self.s_unbounded, self.b = random.normal(key, shape=(2,) + input_shape)
+
+  def data_dependent_init(self,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert x.shape[1:] == self.input_shape, 'x must be batched'
     mean, std = util.mean_and_std(x, axis=0)
     std += 1e-4
 
     # Initialize the parameters so that z will have
     # zero mean and unit variance
-    self.b = mean
-    self.s_unbounded = std - 1/std
+    b = mean
+    s_unbounded = std - 1/std
+
+    # Turn the new parameters into a new module
+    get_b = lambda tree: tree.b
+    get_s_unbounded = lambda tree: tree.s_unbounded
+    updated_layer = eqx.tree_at(get_b, self, b)
+    updated_layer = eqx.tree_at(get_s_unbounded, updated_layer, s_unbounded)
+
+    return updated_layer
 
   def __call__(self,
                x: Array,
@@ -82,7 +101,11 @@ class ShiftScale(BijectiveTransform):
     else:
       z = x*s + self.b
 
-    log_det = -log_s.sum()
+    if inverse == False:
+      log_det = -log_s.sum()
+    else:
+      log_det = log_s.sum()
+
     return z, log_det
 
 ################################################################################################################
@@ -98,22 +121,17 @@ class DenseLinear(BijectiveTransform):
   W: Array
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
+               input_shape: Tuple[int],
                key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
+
     dim = self.input_shape[-1]
     self.W = random.normal(key, shape=(dim, dim))
     self.W = util.whiten(self.W)
@@ -146,6 +164,10 @@ class DenseLinear(BijectiveTransform):
     else:
       dim_mult = 1
     log_det = jnp.linalg.slogdet(self.W)[1]*dim_mult
+
+    if inverse:
+      log_det *= -1
+
     return z, log_det
 
 ################################################################################################################
@@ -163,29 +185,40 @@ class DenseAffine(BijectiveTransform):
   b: Array
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
+               input_shape: Tuple[int],
                key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
-    # Return mean to 0
-    self.b = -jnp.mean(x, axis=0)
 
-    self.W = DenseLinear(x=x - self.b,
-                         y=y,
+    self.W = DenseLinear(input_shape=input_shape,
                          key=key,
                          **kwargs)
+    self.b = jnp.zeros(input_shape)
+
+  def data_dependent_init(self,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert x.shape[1:] == self.input_shape, 'x must be batched'
+    b = -jnp.mean(x, axis=0)
+    return eqx.tree_at(lambda tree: tree.b, self, b)
 
   def __call__(self,
                x: Array,
@@ -208,7 +241,6 @@ class DenseAffine(BijectiveTransform):
     else:
       x = x - self.b
       z, log_det = self.W(x, y=y, inverse=True)
-
     return z, log_det
 
 ################################################################################################################
@@ -232,30 +264,42 @@ class PLUAffine(BijectiveTransform):
   b: Array
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
+               input_shape: Tuple[int],
                key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
 
-    # Return mean to 0
-    self.b = -jnp.mean(x, axis=0)
-
     # Initialize so that this will be approximately the identity matrix
-    dim = x.shape[-1]
+    dim = input_shape[-1]
     self.A = random.normal(key, shape=(dim, dim))*0.01
     self.A = self.A.at[jnp.arange(dim),jnp.arange(dim)].set(1.0)
+
+    self.b = jnp.zeros(input_shape)
+
+  def data_dependent_init(self,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert x.shape[1:] == self.input_shape, 'x must be batched'
+    b = -jnp.mean(x, axis=0)
+    return eqx.tree_at(lambda tree: tree.b, self, b)
 
   def __call__(self,
                x: Array,
@@ -291,6 +335,8 @@ class PLUAffine(BijectiveTransform):
       z = U_solve_vmap(self.A*upper_mask, z) - self.b
 
     log_det = jnp.log(jnp.abs(jnp.diag(self.A))).sum()*util.list_prod(x.shape[:-1])
+    if inverse:
+      log_det *= -1
     return z, log_det
 
 ################################################################################################################
@@ -298,7 +344,7 @@ class PLUAffine(BijectiveTransform):
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from generax.flow.base import Sequential
+  from generax.flows.base import Sequential
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2, 2, 2))
@@ -312,7 +358,13 @@ if __name__ == '__main__':
 
   # import pdb; pdb.set_trace()
 
-  layer = PLUAffine(x=x, key=key)
+  layer = ShiftScale(input_shape=x.shape[1:],
+                     key=key)
+
+  x = random.normal(key, shape=(2, 2, 2, 2))
+  layer = layer.data_dependent_init(x, key=key)
+
+  # layer = PLUAffine(x=x, key=key)
   z, log_det = eqx.filter_vmap(layer)(x)
 
   z, log_det = layer(x[0])

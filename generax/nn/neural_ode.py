@@ -20,7 +20,7 @@ class NeuralODE(eqx.Module):
 
   def __init__(self,
                vf: eqx.Module,
-               adjoint: Optional[str] = "recursive_checkpoint",
+               adjoint: Optional[str] = 'recursive_checkpoint',
                controller_rtol: Optional[float] = 1e-3,
                controller_atol: Optional[float] = 1e-5,
   ):
@@ -37,11 +37,11 @@ class NeuralODE(eqx.Module):
     """
     self.vector_field = vf
 
-    if adjoint == "recursive_checkpoint":
+    if adjoint == 'recursive_checkpoint':
       self.adjoint = diffrax.RecursiveCheckpointAdjoint()
-    elif adjoint == "direct":
+    elif adjoint == 'direct':
       self.adjoint = diffrax.DirectAdjoint()
-    elif adjoint == "seminorm":
+    elif adjoint == 'seminorm':
       adjoint_controller = diffrax.PIDController(
           rtol=1e-3, atol=1e-6, norm=diffrax.adjoint_rms_seminorm)
       self.adjoint = diffrax.BacksolveAdjoint(stepsize_controller=adjoint_controller)
@@ -50,7 +50,7 @@ class NeuralODE(eqx.Module):
 
   def __call__(self,
                x: Array,
-               key: Optional[PRNGKeyArray] = None,
+               y: Optional[Array] = None,
                *,
                inverse: Optional[bool] = False,
                log_likelihood: Optional[bool] = False,
@@ -93,7 +93,7 @@ class NeuralODE(eqx.Module):
 
       # Fill the model with the current time
       def apply_vf(x):
-        return model(t, x)
+        return model(t, x, y=y)
 
       if log_likelihood:
         if trace_estimate_likelihood:

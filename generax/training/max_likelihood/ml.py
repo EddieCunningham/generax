@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from generax.distributions import ProbabilityDistribution
 from jaxtyping import Array, PRNGKeyArray
 import generax.nn.util as util
-from generax.flow.models import NormalizingFlow
+from generax.distributions import NormalizingFlow
 
 __all__ = ['max_likelihood']
 
@@ -41,7 +41,7 @@ def max_likelihood(flow: NormalizingFlow,
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from generax.flow.models import RealNVP
+  from generax.flows.models import RealNVP
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2))

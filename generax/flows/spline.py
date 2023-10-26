@@ -8,7 +8,7 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
 import generax.nn.util as util
-from generax.flow.base import BijectiveTransform
+from generax.flows.base import BijectiveTransform
 import numpy as np
 
 __all__ = ['RationalQuadraticSpline',]
@@ -167,27 +167,26 @@ class RationalQuadraticSpline(BijectiveTransform):
   bounds: Sequence[float] = eqx.field(static=True)
 
   def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
-               key: PRNGKeyArray,
+               input_shape: Tuple[int],
                K: int = 8,
                min_width: Optional[float] = 1e-3,
                min_height: Optional[float] = 1e-3,
                min_derivative: Optional[float] = 1e-3,
                bounds: Sequence[float] = ((-10.0, 10.0), (-10.0, 10.0)),
+               *,
+               key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
-    - `x`: A JAX array with shape `shape`. This is *required*
-           to be batched!
-    - `y`: A JAX array with shape `shape` representing conditioning
-          information.  Should also be batched.
+    - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
+    - `K`: The number of knots to use.
+    - `min_width`: The minimum width of the knots.
+    - `min_height`: The minimum height of the knots.
+    - `min_derivative`: The minimum derivative of the knots.
+    - `bounds`: The bounds of the splines.
     """
-    super().__init__(x=x,
-                     y=y,
-                     key=key,
+    super().__init__(input_shape=input_shape,
                      **kwargs)
     self.K = K
     self.min_width = min_width
@@ -195,8 +194,8 @@ class RationalQuadraticSpline(BijectiveTransform):
     self.min_derivative = min_derivative
     self.bounds = bounds
 
-    x_dim = x.shape[-1]
-    self.theta = random.normal(key, shape=(x_dim*(3*self.K - 1),))
+    x_dim = input_shape[-1]
+    self.theta = random.normal(key, shape=(x_dim*(3*self.K - 1),))*0.1
 
   def __call__(self,
                x: Array,
@@ -232,6 +231,8 @@ class RationalQuadraticSpline(BijectiveTransform):
     elementwise_log_det = jnp.log(dzdx)
 
     log_det = elementwise_log_det.sum()
+    if inverse:
+      log_det *= -1
 
     return z, log_det
 
@@ -240,7 +241,7 @@ class RationalQuadraticSpline(BijectiveTransform):
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
-  from generax.flow.base import Sequential
+  from generax.flows.base import Sequential
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2))
