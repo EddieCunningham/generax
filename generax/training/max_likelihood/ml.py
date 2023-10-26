@@ -6,15 +6,16 @@ from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
-from generax.distributions import ProbabilityDistribution
+from generax.distributions.base import ProbabilityDistribution
 from jaxtyping import Array, PRNGKeyArray
 import generax.nn.util as util
-from generax.distributions import NormalizingFlow
+from generax.distributions.flow_models import NormalizingFlow
 
 __all__ = ['max_likelihood']
 
 def max_likelihood(flow: NormalizingFlow,
-                   data: Array):
+                   data: Array,
+                   key: PRNGKeyArray) -> Tuple[Array, Mapping[str, Any]]:
   """Compute the maximum likelihood objective for a flow.
 
   **Arguments**:
@@ -30,11 +31,20 @@ def max_likelihood(flow: NormalizingFlow,
   - `aux`: A dictionary of auxiliary information
   """
   x = data['x']
-  log_px = eqx.filter_vmap(flow.log_prob)(x).mean()
+  keys = random.split(key, x.shape[0])
+
+  if 'y' in data:
+    y = data['y']
+    def log_prob(x, y, key):
+      return flow.log_prob(x, y=y, key=key)
+  else:
+    def log_prob(x, key):
+      return flow.log_prob(x, key=key)
+
+  log_px = eqx.filter_vmap(log_prob)(x, keys).mean()
   objective = -log_px
   aux = dict(log_px = log_px)
   return objective, aux
-
 
 ################################################################################################################
 

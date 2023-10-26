@@ -14,14 +14,17 @@ import os
 class TrainingState(eqx.Module):
 
   i: float
+  key: PRNGKeyArray
   model: eqx.Module
   opt_state: optax.OptState
 
   def __init__(self,
                i: float, # float so that it is not treated as static
+               key: PRNGKeyArray,
                model: eqx.Module,
-               opt_state: optax.OptState,):
+               opt_state: optax.OptState):
     self.i = i
+    self.key = key
     self.model = model
     self.opt_state = opt_state
 
@@ -44,21 +47,11 @@ class Checkpointer(eqx.Module):
 
   def save_eqx_module(self,
                       model: eqx.Module):
-
     eqx.tree_serialise_leaves(self.saved_model_path, model)
-
-    # model_params, model_state = eqx.partition(model, eqx.is_array)
-    # util.save_pytree(model_params, self.saved_model_path, overwrite=True)
 
   def load_eqx_module(self,
                       model_example: eqx.Module):
-
     return eqx.tree_deserialise_leaves(self.saved_model_path, model_example)
-
-    # _, model_state = eqx.partition(model_example, eqx.is_array)
-    # model_params = util.load_pytree(self.saved_model_path)
-    # model = eqx.combine(model_params, model_state)
-    # return model
 
 ################################################################################################################
 
@@ -81,11 +74,12 @@ class Trainer(eqx.Module):
                  objective: Callable,
                  optimizer: optax.GradientTransformation,
                  train_state: TrainingState,
-                 data: Dict[str,Array]):
+                 data: Dict[str,Array]) -> Tuple[TrainingState, Mapping[str, Any]]:
     i, model, opt_state = train_state.i, train_state.model, train_state.opt_state
+    train_key, next_key = random.split(train_state.key)
 
     # Compute the gradients of the objective
-    (obj, aux), grads = eqx.filter_value_and_grad(objective, has_aux=True)(model, data)
+    (obj, aux), grads = eqx.filter_value_and_grad(objective, has_aux=True)(model, data, train_key)
     aux['objective'] = obj
 
     # Update the model
@@ -94,6 +88,7 @@ class Trainer(eqx.Module):
 
     # Package the updated training state
     updated_train_state = TrainingState(i=i+1,
+                                        key=next_key,
                                         model=new_model,
                                         opt_state=new_opt_state)
     return updated_train_state, aux
@@ -127,9 +122,11 @@ class Trainer(eqx.Module):
     - `test_every`: How often to evaluate the model
     - `retrain`: Whether to force retraining from scratch
     """
+    key0 = random.PRNGKey(0)
+
     # Load the most recent checkpoint
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
-    train_state = TrainingState(jnp.array(0.0), model, opt_state)
+    train_state = TrainingState(jnp.array(0.0), key0, model, opt_state)
 
     # Load the most recent checkpoint
     if retrain == False:

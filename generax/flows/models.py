@@ -18,7 +18,7 @@ __all__ = ['RealNVPTransform',
 from generax.flows.coupling import Coupling
 from generax.flows.affine import ShiftScale, PLUAffine
 from generax.flows.reshape import Reverse
-from generax.distributions import Gaussian
+from generax.distributions.base import Gaussian
 from generax.flows.spline import RationalQuadraticSpline
 from generax.nn.resnet_1d import ResNet1d
 

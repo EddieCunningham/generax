@@ -175,7 +175,8 @@ class Coupling(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool = False) -> Array:
+               inverse: bool = False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -189,12 +190,12 @@ class Coupling(BijectiveTransform):
 
     # Split the input into two halves
     x1, x2 = self.split(x)
-    params = self.net(x2, y=y)
+    params = self.net(x2, y=y, **kwargs)
     params *= self.scale
 
     # Apply the transformation to x1 given x2
     transform = self.params_to_transform(params)
-    z1, log_det = transform(x1, y=y, inverse=inverse)
+    z1, log_det = transform(x1, y=y, inverse=inverse, **kwargs)
 
     z = jnp.concatenate([z1, x2], axis=-1)
     return z, log_det
@@ -208,7 +209,7 @@ if __name__ == '__main__':
   from generax.flows.affine import DenseAffine, ShiftScale
   from generax.flows.reshape import Reverse
   from generax.flows.models import NormalizingFlow
-  from generax.distributions import Gaussian
+  from generax.distributions.base import Gaussian
 
   # Turn on x64
   from jax.config import config

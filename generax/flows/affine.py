@@ -80,7 +80,8 @@ class ShiftScale(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -139,7 +140,8 @@ class DenseLinear(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool = False) -> Array:
+               inverse: bool = False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -223,7 +225,8 @@ class DenseAffine(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -304,7 +307,8 @@ class PLUAffine(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation

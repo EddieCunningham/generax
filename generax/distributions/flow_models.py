@@ -8,122 +8,15 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
-
-__all__ = ['ProbabilityDistribution',
-           'Gaussian']
-
-class ProbabilityDistribution(eqx.Module, ABC):
-  """An object that we can sample from and use to evaluate log probabilities.
-
-  **Atributes**:
-
-  - `data_shape`: The dimension of the sampling space.
-
-  **Methods**:
-
-  - `sample_and_log_prob(key) -> (x,log_px)`: Sample from the distribution and compute the log probability.
-  - `sample(key) -> x`: Pull a single sample from the model
-  - `log_prob(x) -> log_px`: Compute the log probability of a point under the model
-  """
-
-  data_shape: int = eqx.field(static=True)
-
-  def __init__(self,
-               *,
-               data_shape: Union[int, Tuple[int]],
-               **kwargs):
-    """**Arguments**:
-
-    - `data_shape`: The dimension of the space.  This can be either
-            an integer or a tuple of integers to represent images
-    """
-    super().__init__(**kwargs)
-    assert isinstance(data_shape, tuple) or isinstance(data_shape, list)
-    self.data_shape = data_shape
-
-  @abstractmethod
-  def sample_and_log_prob(self,
-                          key: PRNGKeyArray) -> Array:
-    """**Arguments**:
-
-    - `key`: The random number generator key.
-
-    **Returns**:
-    A single sample from the model with its log probability.
-    """
-    pass
-
-  def sample(self,
-             key: PRNGKeyArray,
-             n_samples: Optional[int] = None) -> Array:
-    """**Arguments**:
-
-    - `key`: The random number generator key.
-    - `n_samples`: The number of samples to draw.  If `None`,
-                   then we just draw a single sample.
-
-    **Returns**:
-    Samples from the model
-    """
-    if n_samples is None:
-      return self.sample_and_log_prob(key)[0]
-    keys = random.split(key, n_samples)
-    return eqx.filter_vmap(self.sample)(keys)
-
-  @abstractmethod
-  def log_prob(self,
-               x: Array) -> Array:
-    """**Arguments**:
-
-    - `x`: The point we want to compute logp(x) at.
-
-    **Returns**:
-    The log likelihood of x under the model.
-    """
-    pass
-
-################################################################################################################
-
-class Gaussian(ProbabilityDistribution):
-  """This represents a Gaussian distribution"""
-
-  def sample(self,
-             key: PRNGKeyArray) -> Array:
-    """**Arguments**:
-
-    - `key`: The random number generator key.
-
-    **Returns**:
-    A single sample from the model.  Use vmap to get more samples.
-    """
-    return random.normal(key, shape=self.data_shape)
-
-  def log_prob(self,
-               x: Array) -> Array:
-    """**Arguments**:
-
-    - `x`: The point we want to compute logp(x) at.
-
-    **Returns**:
-    The log likelihood of x under the model.
-    """
-    return jax.scipy.stats.norm.logpdf(x).sum()
-
-  def sample_and_log_prob(self,
-                          key: PRNGKeyArray) -> Array:
-    """**Arguments**:
-
-    - `key`: The random number generator key.
-
-    **Returns**:
-    A single sample from the model with its log probability.
-    """
-    x = self.sample(key)
-    log_px = self.log_prob(x)
-    return x, log_px
-
-################################################################################################################
+from generax.distributions.base import ProbabilityDistribution, Gaussian
 from generax.flows.base import BijectiveTransform
+from generax.flows.models import RealNVPTransform, NeuralSplineTransform
+from generax.flows.ffjord import FFJORDTransform
+
+__all__ = ['NormalizingFlow',
+           'RealNVP',
+           'NeuralSpline',
+           'ContinuousNormalizingFlow']
 
 class NormalizingFlow(ProbabilityDistribution, ABC):
   """A normalizing flow is a model that we use to represent probability
@@ -189,7 +82,8 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
 
   def sample_and_log_prob(self,
                           key: PRNGKeyArray,
-                          y: Optional[Array] = None) -> Array:
+                          y: Optional[Array] = None,
+                          **kwargs) -> Array:
     """**Arguments**:
 
     - `key`: The random number generator key.
@@ -199,12 +93,13 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
     A single sample from the model.  Use vmap to get more samples.
     """
     z, log_pz = self.prior.sample_and_log_prob(key)
-    x, log_det = self.transform(z, y=y, inverse=True)
+    x, log_det = self.transform(z, y=y, inverse=True, **kwargs)
     return x, log_pz + log_det
 
   def log_prob(self,
                x: Array,
-               y: Optional[Array] = None) -> Array:
+               y: Optional[Array] = None,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The point we want to compute logp(x) at.
@@ -213,7 +108,7 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
     **Returns**:
     The log likelihood of x under the model.
     """
-    z, log_det = self.transform(x, y=y)
+    z, log_det = self.transform(x, y=y, **kwargs)
     log_pz = self.prior.log_prob(z)
     return log_pz + log_det
 
@@ -238,8 +133,6 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
     get_transform = lambda tree: tree.transform
     return eqx.tree_at(get_transform, self, new_layer)
 
-
-from generax.flows.models import RealNVPTransform, NeuralSplineTransform
 
 class RealNVP(NormalizingFlow):
 
@@ -311,3 +204,80 @@ class NeuralSpline(NormalizingFlow):
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
+
+class ContinuousNormalizingFlow(NormalizingFlow):
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               working_size: int = 16,
+               hidden_size: int = 32,
+               n_blocks: int = 4,
+               time_embedding_size = 16,
+               n_time_features = 8,
+               cond_shape: Optional[Tuple[int]] = None,
+               *,
+               controller_rtol: Optional[float] = 1e-3,
+               controller_atol: Optional[float] = 1e-5,
+               trace_estimate_likelihood: Optional[bool] = False,
+               adjoint='recursive_checkpoint',
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The shape of the input data.
+    - `working_size`: The size of the working space.
+    - `hidden_size`: The size of the hidden layers.
+    - `n_blocks`: The number of blocks in the coupling layers.
+    - `time_embedding_size`: The size of the time embedding.
+    - `n_time_features`: The number of time features.
+    - `cond_shape`: The shape of the conditioning information.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    transform = FFJORDTransform(input_shape=input_shape,
+                                working_size=working_size,
+                                hidden_size=hidden_size,
+                                n_blocks=n_blocks,
+                                time_embedding_size=time_embedding_size,
+                                n_time_features=n_time_features,
+                                cond_shape=cond_shape,
+                                key=key,
+                                controller_rtol=controller_rtol,
+                                controller_atol=controller_atol,
+                                trace_estimate_likelihood=trace_estimate_likelihood,
+                                adjoint=adjoint)
+    prior = Gaussian(data_shape=input_shape)
+    super().__init__(transform=transform,
+                     prior=prior,
+                     **kwargs)
+
+  def vector_field(self,
+                   t: float,
+                   x: Array,
+                   y: Optional[Array] = None,
+                   **kwargs) -> Array:
+    return self.neural_ode.vector_field(t, x, y=y, **kwargs)
+
+  def sample(self,
+             key: PRNGKeyArray,
+             y: Optional[Array] = None,
+             *,
+             n_samples: Optional[int] = None,
+             **kwargs) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+    - `n_samples`: The number of samples to draw.  If `None`,
+                   then we just draw a single sample.
+
+    **Returns**:
+    Samples from the model
+    """
+    if n_samples is None:
+      z = self.prior.sample(key)
+      x, _ = self.transform(z, y=y, inverse=True, log_likelihood=False, **kwargs)
+      return x
+    if y is not None:
+      if n_samples != y.shape[0]:
+        raise ValueError(f"n_samples ({n_samples}) must match y.shape[0] ({y.shape[0]})")
+    keys = random.split(key, n_samples)
+    return eqx.filter_vmap(self.sample)(keys)

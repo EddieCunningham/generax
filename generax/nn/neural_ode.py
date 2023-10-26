@@ -42,6 +42,8 @@ class NeuralODE(eqx.Module):
     elif adjoint == 'direct':
       self.adjoint = diffrax.DirectAdjoint()
     elif adjoint == 'seminorm':
+      assert 0, "There is a tracer leak somewhere "
+      # TODO: Make a bug report
       adjoint_controller = diffrax.PIDController(
           rtol=1e-3, atol=1e-6, norm=diffrax.adjoint_rms_seminorm)
       self.adjoint = diffrax.BacksolveAdjoint(stepsize_controller=adjoint_controller)
@@ -55,7 +57,8 @@ class NeuralODE(eqx.Module):
                inverse: Optional[bool] = False,
                log_likelihood: Optional[bool] = False,
                trace_estimate_likelihood: Optional[bool] = False,
-               save_at: Optional[Array] = None) -> Array:
+               save_at: Optional[Array] = None,
+               key: Optional[PRNGKeyArray] = None) -> Array:
     """**Arguemnts**:
 
     - `x`: The input to the neural ODE.  Must be a rank 1 array.
@@ -65,6 +68,7 @@ class NeuralODE(eqx.Module):
     - `log_likelihood`: Whether to compute the log likelihood of the neural ODE.
     - `trace_estimate_likelihood`: Whether to compute a trace estimate of the likelihood of the neural ODE.
     - `save_at`: The times to save the neural ODE at.
+    - `key`: The random key to use for initialization
 
     **Returns**:
     - `z`: The output of the neural ODE.
@@ -97,7 +101,7 @@ class NeuralODE(eqx.Module):
 
       if log_likelihood:
         if trace_estimate_likelihood:
-          # Hutchinsons trace estimator.  See FFJORD https://arxiv.org/pdf/1810.01367.pdf
+          # Hutchinsons trace estimator.  See ContinuousNormalizingFlow https://arxiv.org/pdf/1810.01367.pdf
           dxdt, dudxv = jax.jvp(apply_vf, (x,), (v,))
           dlogpxdt = -jnp.sum(dudxv*v)
         else:
@@ -152,37 +156,8 @@ class NeuralODE(eqx.Module):
       outs = jax.tree_util.tree_map(lambda x: x[0], outs)
 
     z, log_px = outs
-    if log_likelihood:
-      return z, log_px
-    return z
 
-################################################################################################################
+    if inverse:
+      log_px = -log_px
 
-if __name__ == "__main__":
-  from debug import *
-  jax.config.update("jax_enable_x64", True)
-  import equinox as eqx
-  from generax.nn.resnet_1d import ResNet1d
-
-  # Create some data
-  key = random.PRNGKey(0)
-  x = random.normal(key, (10, 2))
-
-  # Network
-  net = TimeDependentResNet(in_size=x.shape[-1],
-                            out_size=x.shape[-1],
-                            hidden_size=16,
-                            n_blocks=6,
-                            time_embedding_size=32,
-                            key=key)
-  neural_ode = NeuralODE(net)
-
-  # Run the tests
-  # test_basic_run(neural_ode, x)
-  test_inverse(neural_ode, x)
-  test_log_likelihood(neural_ode, x)
-  test_trace_estimator(neural_ode, x)
-  test_multivariate(neural_ode, x)
-
-
-  import pdb; pdb.set_trace()
+    return z, log_px

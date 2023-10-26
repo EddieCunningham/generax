@@ -32,7 +32,8 @@ class Reverse(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation

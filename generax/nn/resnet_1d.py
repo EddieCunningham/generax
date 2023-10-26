@@ -316,7 +316,8 @@ class ResNet1d(eqx.Module):
 
   def __call__(self,
                 x: Array,
-                y: Optional[Array] = None) -> Array:
+                y: Optional[Array] = None,
+                **kwargs) -> Array:
     """**Arguments:**
 
     - `t`: A JAX array with shape `()`.
@@ -414,7 +415,8 @@ class TimeDependentResNet1d(ResNet1d):
   def __call__(self,
                t: Array,
                x: Array,
-               y: Optional[Array] = None) -> Array:
+               y: Optional[Array] = None,
+               **kwargs) -> Array:
     assert t.shape == ()
 
     h = self.time_features(t)

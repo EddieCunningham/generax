@@ -79,7 +79,8 @@ class BijectiveTransform(eqx.Module, ABC):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -192,7 +193,8 @@ class Sequential(BijectiveTransform):
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,
-               inverse: bool=False) -> Array:
+               inverse: bool=False,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -205,7 +207,7 @@ class Sequential(BijectiveTransform):
     delta_logpx = 0.0
     layers = reversed(self.layers) if inverse else self.layers
     for layer in layers:
-      x, log_det = layer(x, y=y, inverse=inverse)
+      x, log_det = layer(x, y=y, inverse=inverse, **kwargs)
       delta_logpx += log_det
     return x, delta_logpx
 
