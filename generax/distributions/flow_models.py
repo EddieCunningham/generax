@@ -205,15 +205,13 @@ class NeuralSpline(NormalizingFlow):
                      prior=prior,
                      **kwargs)
 
+################################################################################################################
+
 class ContinuousNormalizingFlow(NormalizingFlow):
 
   def __init__(self,
                input_shape: Tuple[int],
-               working_size: int = 16,
-               hidden_size: int = 32,
-               n_blocks: int = 4,
-               time_embedding_size = 16,
-               n_time_features = 8,
+               net: eqx.Module = None,
                cond_shape: Optional[Tuple[int]] = None,
                *,
                controller_rtol: Optional[float] = 1e-3,
@@ -225,37 +223,28 @@ class ContinuousNormalizingFlow(NormalizingFlow):
     """**Arguments**:
 
     - `input_shape`: The shape of the input data.
-    - `working_size`: The size of the working space.
-    - `hidden_size`: The size of the hidden layers.
-    - `n_blocks`: The number of blocks in the coupling layers.
-    - `time_embedding_size`: The size of the time embedding.
-    - `n_time_features`: The number of time features.
+    - `net`: The neural network to use for the vector field.  If None, a default
+              network will be used.  `net` should accept `net(t, x, y=y)`
     - `cond_shape`: The shape of the conditioning information.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
     transform = FFJORDTransform(input_shape=input_shape,
-                                working_size=working_size,
-                                hidden_size=hidden_size,
-                                n_blocks=n_blocks,
-                                time_embedding_size=time_embedding_size,
-                                n_time_features=n_time_features,
+                                net=net,
                                 cond_shape=cond_shape,
                                 key=key,
                                 controller_rtol=controller_rtol,
                                 controller_atol=controller_atol,
                                 trace_estimate_likelihood=trace_estimate_likelihood,
-                                adjoint=adjoint)
+                                adjoint=adjoint,
+                                **kwargs)
     prior = Gaussian(data_shape=input_shape)
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
 
-  def vector_field(self,
-                   t: float,
-                   x: Array,
-                   y: Optional[Array] = None,
-                   **kwargs) -> Array:
-    return self.neural_ode.vector_field(t, x, y=y, **kwargs)
+  @property
+  def vector_field(self):
+    return self.transform.vector_field
 
   def sample(self,
              key: PRNGKeyArray,

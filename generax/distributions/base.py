@@ -37,7 +37,6 @@ class ProbabilityDistribution(eqx.Module, ABC):
     - `data_shape`: The dimension of the space.  This can be either
             an integer or a tuple of integers to represent images
     """
-    super().__init__(**kwargs)
     assert isinstance(data_shape, tuple) or isinstance(data_shape, list)
     self.data_shape = data_shape
 

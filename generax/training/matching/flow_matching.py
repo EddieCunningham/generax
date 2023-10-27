@@ -8,17 +8,17 @@ from generax.training.matching.paths import *
 from generax.training.matching.coupling import *
 from generax.distributions.base import *
 from generax.distributions.flow_models import ContinuousNormalizingFlow
+from jaxtyping import Array, PRNGKeyArray
+import equinox as eqx
+
+__all__ = ['FlowMatching']
 
 class FlowMatching():
 
   def __init__(self,
                path_type: Optional[str]="straight",
-               coupling_type: Optional[str]="ot",
-               t0: float = 0.0,
-               t1: float = 1.0):
+               coupling_type: Optional[str]="ot"):
     """Initialize the flow matcher"""
-    self.t0 = t0
-    self.t1 = t1
 
     assert path_type in ["straight"]
     assert coupling_type in ["uniform", "ot"]
@@ -38,19 +38,19 @@ class FlowMatching():
   def get_training_batch(self,
                          x0: jax.Array,
                          x1: jax.Array,
-                         rng_key: random.PRNGKey) -> Tuple[jax.Array, jax.Array, jax.Array]:
+                         key: PRNGKeyArray) -> Tuple[jax.Array, jax.Array, jax.Array]:
     """Get the arrays that we'll use to train our network
 
     Args:
       x0: Source samples.
       x1: Target samples.
-      rng_key: The random number generator key.
+      key: The random number generator key.
 
     Returns:
       A tuple of (t, x, u) where t is the time, x is the point, and u is the tangent vector.
     """
     assert x0.shape == x1.shape
-    k1, k2 = random.split(rng_key, 2)
+    k1, k2 = random.split(key, 2)
 
     # Apply a coupling in order to sample from q(x_0, x_1)
     coupling = self.coupling(x0, x1)
@@ -60,36 +60,71 @@ class FlowMatching():
     path = self.path(x0, x1)
 
     # Get a random time point that we want to sample
-    t = random.uniform(k2, (x1.shape[0],), minval=self.t0, maxval=self.t1)
+    t = random.uniform(k2, (x1.shape[0],), minval=0.0, maxval=1.0)
 
     # Get the point and tangent vector
     xt, ut = path.get_point_and_tangent_vector(t)
 
     return t, xt, ut
 
+  def initialize_vector_field(self,
+                              flow: ContinuousNormalizingFlow,
+                              data: jax.Array,
+                              key: PRNGKeyArray):
+    k1, k2, k3 = random.split(key, 3)
+    # Sample from the prior
+    x1 = data['x']
+    x0 = flow.prior.sample(k1, n_samples=x1.shape[0])
+
+    # Given the data, get the training batch
+    t, xt, _ = self.get_training_batch(x0, x1, k2)
+
+    # Pass this through the vector field to initialize
+    if 'y' in data:
+      y = data['y']
+      assert y.shape[0] == data.shape[0]
+      vt = flow.vector_field.data_dependent_init(t, xt, y, key=k3)
+    else:
+      vt = flow.vector_field.data_dependent_init(t, xt, key=k3)
+
+    new_flow = eqx.tree_at(lambda tree: tree.vector_field, flow, vt)
+    return new_flow
+
   def loss_function(self,
                     flow: ContinuousNormalizingFlow,
                     data: jax.Array,
-                    rng_key: random.PRNGKey) -> jax.Array:
+                    key: PRNGKeyArray) -> jax.Array:
     """Compute the flow matching objective.
 
     Args:
       data: The data.
       V: The vector field function.  Must accept two arguments: t and x.
-      rng_key: The random number generator key.
+      key: The random number generator key.
 
     Returns:
       The flow matching objective.
     """
+    assert isinstance(flow, ContinuousNormalizingFlow)
+
+    # Sample from the prior
+    x1 = data['x']
+    x0 = flow.prior.sample(key, n_samples=x1.shape[0])
+
     # Given the data, get the training batch
-    t, xt, ut = self.get_training_batch(data, rng_key)
+    t, xt, ut = self.get_training_batch(x0, x1, key)
 
     # Evaluate the vector field at the point
-    vt = V(t, xt)
+    if 'y' in data:
+      y = data['y']
+      assert y.shape[0] == data.shape[0]
+      vt = eqx.filter_vmap(flow.vector_field)(t, xt, y)
+    else:
+      vt = eqx.filter_vmap(flow.vector_field)(t, xt)
 
     # Compute the flow matching objective
     objective = jnp.mean((vt - ut)**2)
 
-    return objective
+    aux = dict(objective = objective)
+    return objective, aux
 
 

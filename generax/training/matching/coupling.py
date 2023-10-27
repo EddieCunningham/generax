@@ -7,6 +7,10 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 
+__all__ = ['Coupling',
+           'UniformCoupling',
+           'OTTCoupling']
+
 class Coupling(eqx.Module, ABC):
   """Given two batches of samples from two distributions, this
   will compute a discrete distribution q(x_0,x_1) = pi(i,j)delta(x_0 - x_0^i)delta(x_1 - x_1^j))"""

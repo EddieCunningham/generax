@@ -32,6 +32,7 @@ class FFJORDTransform(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
+               net: eqx.Module = None,
                working_size: int = 16,
                hidden_size: int = 32,
                n_blocks: int = 4,
@@ -48,8 +49,8 @@ class FFJORDTransform(BijectiveTransform):
     """**Arguments**:
 
     - `input_shape`: The shape of the input to the transformation
-    - `vf`: A function that computes the vector field.  It must output
-            a vector of the same shape as its input.
+    - `net`: The neural network to use for the vector field.  If None, a default
+              network will be used.  `net` should accept `net(t, x, y=y)`
     - `controller_rtol`: The relative tolerance of the stepsize controller.
     - `controller_atol`: The absolute tolerance of the stepsize controller.
     - `trace_estimate_likelihood`: Whether to use a trace estimate for the likelihood.
@@ -60,18 +61,19 @@ class FFJORDTransform(BijectiveTransform):
     - `key`: The random key to use for initialization
     """
 
-    if len(input_shape) == 1:
-      net = TimeDependentResNet1d(in_size=input_shape[-1],
-                            working_size=working_size,
-                            hidden_size=hidden_size,
-                            out_size=input_shape[-1],
-                            n_blocks=n_blocks,
-                            cond_size=cond_shape,
-                            embedding_size=time_embedding_size,
-                            out_features=n_time_features,
-                            key=key)
-    else:
-      raise NotImplementedError(f'Only implemented for 1d inputs')
+    if net is None:
+      if len(input_shape) == 1:
+        net = TimeDependentResNet1d(in_size=input_shape[-1],
+                              working_size=working_size,
+                              hidden_size=hidden_size,
+                              out_size=input_shape[-1],
+                              n_blocks=n_blocks,
+                              cond_size=cond_shape,
+                              embedding_size=time_embedding_size,
+                              out_features=n_time_features,
+                              key=key)
+      else:
+        raise NotImplementedError(f'Default network only implemented for 1d inputs')
 
     self.neural_ode = NeuralODE(vf=net,
                                 adjoint=adjoint,
@@ -82,12 +84,9 @@ class FFJORDTransform(BijectiveTransform):
     super().__init__(input_shape=input_shape,
                      **kwargs)
 
-  def vector_field(self,
-                   t: float,
-                   x: Array,
-                   y: Optional[Array] = None,
-                   **kwargs) -> Array:
-    return self.neural_ode.vector_field(t, x, y=y, **kwargs)
+  @property
+  def vector_field(self):
+    return self.neural_ode.vector_field
 
   def __call__(self,
                x: Array,
@@ -111,7 +110,7 @@ class FFJORDTransform(BijectiveTransform):
       raise TypeError(f'When using trace estimation, must pass random key')
 
     if log_likelihood == False:
-      trace_estimate_likelihood = False # Don't run this code!
+      trace_estimate_likelihood = False
     else:
       trace_estimate_likelihood = self.trace_estimate_likelihood
 

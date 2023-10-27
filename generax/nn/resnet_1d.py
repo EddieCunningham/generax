@@ -407,7 +407,7 @@ class TimeDependentResNet1d(ResNet1d):
     A new layer with the parameters initialized.
     """
     assert t.ndim == 1
-    h = self.time_features(t)
+    h = eqx.filter_vmap(self.time_features)(t)
     if y is not None:
       h = jnp.concatenate([h, y], axis=-1)
     return super().data_dependent_init(x, y=h, key=key)

@@ -7,6 +7,10 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 
+__all__ = ['Path',
+           'StraightPath',
+           'VariancePreservingPath']
+
 class Path(eqx.Module, ABC):
   """This represents a path that we can construct between
   two points.  We will be able to get points along this path"""
