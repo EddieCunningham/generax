@@ -20,6 +20,7 @@ class ResNet(eqx.Module):
   out_projection: eqx.nn.Linear
 
   input_shape: int = eqx.field(static=True)
+  cond_shape: int = eqx.field(static=True)
   working_size: int = eqx.field(static=True)
   hidden_size: int = eqx.field(static=True)
   out_size: int = eqx.field(static=True)
@@ -71,7 +72,7 @@ class ResNet(eqx.Module):
     if isinstance(input_shape, int):
       input_shape = (input_shape,)
     self.input_shape = input_shape
-
+    self.cond_shape = cond_shape
 
     if image == False:
       self.in_projection = WeightNormDense(in_size=input_shape[0],
@@ -220,7 +221,9 @@ class TimeDependentResNet(ResNet):
 
     total_cond_size = out_features
     if cond_shape is not None:
-      total_cond_size += cond_shape
+      if len(cond_shape) != 1:
+        raise ValueError(f'Expected 1d conditional input.')
+      total_cond_size += cond_shape[0]
 
     super().__init__(input_shape=input_shape,
                      working_size=working_size,

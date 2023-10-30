@@ -61,6 +61,7 @@ class GeneralTransform(Sequential):
     for i, k in enumerate(keys):
       k1, k2, k3, k4 = random.split(k, 4)
       transform = TransformType(input_shape=transform_input_shape,
+                                cond_shape=cond_shape,
                                 key=k1)
       layer = Coupling(transform,
                        create_net(k2),
@@ -68,8 +69,12 @@ class GeneralTransform(Sequential):
                        cond_shape=cond_shape,
                        key=k2)
       layers.append(layer)
-      layers.append(PLUAffine(input_shape=input_shape, key=k3))
-      layers.append(ShiftScale(input_shape=input_shape, key=k4))
+      layers.append(PLUAffine(input_shape=input_shape,
+                              cond_shape=cond_shape,
+                              key=k3))
+      layers.append(ShiftScale(input_shape=input_shape,
+                               cond_shape=cond_shape,
+                               key=k4))
 
     super().__init__(*layers, **kwargs)
 
