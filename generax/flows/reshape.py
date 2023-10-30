@@ -7,7 +7,7 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 import numpy as np
 

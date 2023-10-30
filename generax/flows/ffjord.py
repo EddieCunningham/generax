@@ -7,10 +7,12 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 from generax.nn.neural_ode import NeuralODE
-from generax.nn.resnet_1d import TimeDependentResNet1d
+from generax.nn.resnet import TimeDependentResNet
+
+__all__ = ['FFJORDTransform']
 
 class FFJORDTransform(BijectiveTransform):
   """Flow parametrized by a neural ODE https://arxiv.org/pdf/1810.01367.pdf
@@ -40,8 +42,8 @@ class FFJORDTransform(BijectiveTransform):
                n_time_features = 8,
                cond_shape: Optional[Tuple[int]] = None,
                *,
-               controller_rtol: Optional[float] = 1e-3,
-               controller_atol: Optional[float] = 1e-5,
+               controller_rtol: Optional[float] = 1e-8,
+               controller_atol: Optional[float] = 1e-8,
                trace_estimate_likelihood: Optional[bool] = False,
                adjoint='recursive_checkpoint',
                key: PRNGKeyArray,
@@ -62,18 +64,15 @@ class FFJORDTransform(BijectiveTransform):
     """
 
     if net is None:
-      if len(input_shape) == 1:
-        net = TimeDependentResNet1d(in_size=input_shape[-1],
-                              working_size=working_size,
-                              hidden_size=hidden_size,
-                              out_size=input_shape[-1],
-                              n_blocks=n_blocks,
-                              cond_size=cond_shape,
-                              embedding_size=time_embedding_size,
-                              out_features=n_time_features,
-                              key=key)
-      else:
-        raise NotImplementedError(f'Default network only implemented for 1d inputs')
+      net = TimeDependentResNet(input_shape=input_shape,
+                            working_size=working_size,
+                            hidden_size=hidden_size,
+                            out_size=input_shape[-1],
+                            n_blocks=n_blocks,
+                            cond_shape=cond_shape,
+                            embedding_size=time_embedding_size,
+                            out_features=n_time_features,
+                            key=key)
 
     self.neural_ode = NeuralODE(vf=net,
                                 adjoint=adjoint,
@@ -129,8 +128,8 @@ if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
-  from generax.nn.resnet_1d import ResNet1d
-  from generax.nn.resnet_1d import TimeDependentResNet1d
+  from generax.nn.resnet import ResNet1d
+  from generax.nn.resnet import TimeDependentResNet
   # enable x64
   from jax.config import config
   config.update("jax_enable_x64", True)

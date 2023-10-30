@@ -6,10 +6,10 @@ from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 import numpy as np
-from generax.nn.resnet_1d import ResNet1d
+from generax.nn.resnet import ResNet
 
 __all__ = ['Coupling']
 
@@ -44,13 +44,14 @@ class RavelParameters(eqx.Module):
     self.indices = np.cumsum(np.array([0] + [size for _, size in self.shapes_and_sizes]))
 
   def __call__(self, flat_params: Array) -> eqx.Module:
+    flat_params = flat_params.ravel() # Flatten the parameters completely
     leaves = []
     for i, (shape, size) in enumerate(self.shapes_and_sizes):
 
       # Extract each leaf from the flattened parameters and reshape it
       buffer = flat_params[self.indices[i]: self.indices[i + 1]]
-      if buffer.size != util.list_prod(shape):
-        raise ValueError(f'Expected total size of {util.list_prod(shape)} but got {buffer.size}')
+      if buffer.size != misc.list_prod(shape):
+        raise ValueError(f'Expected total size of {misc.list_prod(shape)} but got {buffer.size}')
       leaf = buffer.reshape(shape)
       leaves.append(leaf)
 
@@ -129,7 +130,7 @@ class Coupling(BijectiveTransform):
     **Returns**:
     A new layer with the parameters initialized.
     """
-    assert x.shape[1:] == self.input_shape, 'Only works on unbatched data'
+    assert x.shape[1:] == self.input_shape, 'Only works on batched data'
     x1, x2 = self.split(x)
     net = self.net.data_dependent_init(x2, y=y, key=key)
 
@@ -151,6 +152,27 @@ class Coupling(BijectiveTransform):
     x1_shape = input_shape[:-1] + (x1_dim,)
     x2_shape = input_shape[:-1] + (x2_dim,)
     return x1_shape, x2_shape
+
+  @classmethod
+  def get_net_output_shapes(cls,
+                            input_shape: Tuple[int],
+                            transform: BijectiveTransform) -> Tuple[Tuple[int],int]:
+    """
+    **Arguments**:
+    - `input_shape`: The shape of the input
+    - `transform`: The bijective transformation to use.
+
+    **Returns**:
+    - `net_output_size`: The size of the output of the neural network.  This is a single integer
+                         because the network is expected to produce a single vector.
+    """
+    x1_shape, x2_shape = cls.get_split_shapes(input_shape)
+    if x1_shape != transform.input_shape:
+      raise ValueError(f'The transform {transform} needs to have an input shape equal to {x1_shape}.  Use Coupling.get_input_shapes to get this shape.')
+    params_to_transform = RavelParameters(transform)
+    net_output_size = params_to_transform.flat_params_size
+    return net_output_size
+
 
   @classmethod
   def get_net_input_and_output_shapes(cls,
@@ -192,6 +214,7 @@ class Coupling(BijectiveTransform):
     x1, x2 = self.split(x)
     params = self.net(x2, y=y, **kwargs)
     params *= self.scale
+    assert params.size == self.params_to_transform.flat_params_size
 
     # Apply the transformation to x1 given x2
     transform = self.params_to_transform(params)
@@ -208,7 +231,6 @@ if __name__ == '__main__':
   from generax.flows.base import Sequential
   from generax.flows.affine import DenseAffine, ShiftScale
   from generax.flows.reshape import Reverse
-  from generax.flows.models import NormalizingFlow
   from generax.distributions.base import Gaussian
 
   # Turn on x64
@@ -217,27 +239,31 @@ if __name__ == '__main__':
 
   key = random.PRNGKey(0)
   x, y = random.normal(key, shape=(2, 10, 5))
-  y, cond_size = None, None
+  cond_shape = y.shape[1:]
+  y, cond_shape = None, None
 
   input_shape = x.shape[1:]
-  x1_shape, x2_shape = Coupling.get_split_shapes(input_shape)
+  transform_input_shape, net_input_shape = Coupling.get_split_shapes(input_shape)
 
-  transform = DenseAffine(input_shape=x1_shape,
-                         key=key)
-  net_input_shape, net_output_size = Coupling.get_net_input_and_output_shapes(input_shape, transform)
+  transform = ShiftScale(input_shape=transform_input_shape,
+                            key=key)
+  net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
 
-  net = ResNet1d(in_size=net_input_shape[-1],
-                   working_size=8,
-                   hidden_size=16,
-                   out_size=net_output_size,
-                   n_blocks=4,
-                   cond_size=cond_size,
-                   key=key)
+  net = ResNet(input_shape=net_input_shape,
+                   working_size=4,
+                    hidden_size=4,
+                    out_size=net_output_size,
+                    n_blocks=2,
+                    filter_shape=(3, 3),
+                    cond_shape=cond_shape,
+                    key=key)
 
+  transform = ShiftScale(input_shape=transform_input_shape,
+                            key=key)
   layer = Coupling(transform,
                    net,
                    input_shape=input_shape,
-                   cond_shape=cond_size,
+                    cond_shape=cond_shape,
                    key=key)
 
   layer(x[0])
@@ -253,17 +279,5 @@ if __name__ == '__main__':
 
   assert jnp.allclose(log_det, log_det_true)
   assert jnp.allclose(x[0], x_reconstr)
-
-  flow = NormalizingFlow(transform=layer,
-                         prior=Gaussian(data_shape=layer.input_shape))
-
-  log_px = eqx.filter_vmap(flow.log_prob)(x)
-
-  def loss(flow, x):
-    return 0.001*eqx.filter_vmap(flow.log_prob)(x).mean()
-
-  out = eqx.filter_grad(loss)(flow, x)
-  new_flow = eqx.apply_updates(flow, out)
-  log_px2 = eqx.filter_vmap(new_flow.log_prob)(x)
 
   import pdb; pdb.set_trace()

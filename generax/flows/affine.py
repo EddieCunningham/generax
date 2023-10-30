@@ -7,13 +7,14 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 import numpy as np
 
 __all__ = ['ShiftScale',
            'DenseLinear',
            'DenseAffine',
+           'CaleyOrthogonalMVP',
            'PLUAffine',]
 
 class ShiftScale(BijectiveTransform):
@@ -61,7 +62,7 @@ class ShiftScale(BijectiveTransform):
     A new layer with the parameters initialized.
     """
     assert x.shape[1:] == self.input_shape, 'x must be batched'
-    mean, std = util.mean_and_std(x, axis=0)
+    mean, std = misc.mean_and_std(x, axis=0)
     std += 1e-4
 
     # Initialize the parameters so that z will have
@@ -94,7 +95,7 @@ class ShiftScale(BijectiveTransform):
     assert x.shape == self.input_shape, 'Only works on unbatched data'
 
     # s must be strictly positive
-    s = util.square_plus(self.s_unbounded, gamma=1.0) + 1e-4
+    s = misc.square_plus(self.s_unbounded, gamma=1.0) + 1e-4
     log_s = jnp.log(s)
 
     if inverse == False:
@@ -135,7 +136,7 @@ class DenseLinear(BijectiveTransform):
 
     dim = self.input_shape[-1]
     self.W = random.normal(key, shape=(dim, dim))
-    self.W = util.whiten(self.W)
+    self.W = misc.whiten(self.W)
 
   def __call__(self,
                x: Array,
@@ -239,11 +240,87 @@ class DenseAffine(BijectiveTransform):
     assert x.shape == self.input_shape, 'Only works on unbatched data'
 
     if inverse == False:
+      x = x + self.b
       z, log_det = self.W(x, y=y, inverse=False)
-      z = z + self.b
     else:
-      x = x - self.b
       z, log_det = self.W(x, y=y, inverse=True)
+      z = z - self.b
+    return z, log_det
+
+################################################################################################################
+
+class CaleyOrthogonalMVP(BijectiveTransform):
+  """Caley transform parametrization of an orthogonal matrix. This performs
+  a matrix vector product with an orthogonal matrix.
+
+  **Attributes**:
+  - `W`: The weight matrix
+  - `b`: The bias vector
+  """
+
+  W: Array
+  b: Array
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+
+    dim = self.input_shape[-1]
+    self.W = random.normal(key, shape=(dim, dim))
+    self.b = jnp.zeros(input_shape)
+
+  def data_dependent_init(self,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    assert x.shape[1:] == self.input_shape, 'x must be batched'
+    b = -jnp.mean(x, axis=0)
+    return eqx.tree_at(lambda tree: tree.b, self, b)
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool=False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (z, log_det)
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+
+    A = self.W - self.W.T
+    dim = self.input_shape[-1]
+
+    # So that we can multiply with channel dim of images
+    @partial(jnp.vectorize, signature='(i,j),(j)->(i)')
+    def matmul(A, x):
+      return A@x
+
+    if inverse == False:
+      x += self.b
+      IpA_inv = jnp.linalg.inv(jnp.eye(dim) + A)
+      y = matmul(IpA_inv, x)
+      z = y - matmul(A, y)
+    else:
+      ImA_inv = jnp.linalg.inv(jnp.eye(dim) - A)
+      y = matmul(ImA_inv, x)
+      z = y + matmul(A, y)
+      z -= self.b
+
+    log_det = jnp.zeros(1)
     return z, log_det
 
 ################################################################################################################
@@ -326,7 +403,8 @@ class PLUAffine(BijectiveTransform):
     lower_mask = jnp.tril(mask, k=-1)
 
     if inverse == False:
-      z = jnp.einsum("ij,...j->...i", self.A*upper_mask, x + self.b)
+      x += self.b
+      z = jnp.einsum("ij,...j->...i", self.A*upper_mask, x)
       z = jnp.einsum("ij,...j->...i", self.A*lower_mask, z) + z
     else:
       # vmap in order to handle images
@@ -336,9 +414,10 @@ class PLUAffine(BijectiveTransform):
         L_solve_vmap = jax.vmap(L_solve_vmap, in_axes=(None, 0))
         U_solve_vmap = jax.vmap(U_solve_vmap, in_axes=(None, 0))
       z = L_solve_vmap(self.A*lower_mask, x)
-      z = U_solve_vmap(self.A*upper_mask, z) - self.b
+      z = U_solve_vmap(self.A*upper_mask, z)
+      z -= self.b
 
-    log_det = jnp.log(jnp.abs(jnp.diag(self.A))).sum()*util.list_prod(x.shape[:-1])
+    log_det = jnp.log(jnp.abs(jnp.diag(self.A))).sum()*misc.list_prod(x.shape[:-1])
     if inverse:
       log_det *= -1
     return z, log_det
@@ -349,6 +428,8 @@ if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
+  # switch to x64
+  jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2, 2, 2))
@@ -362,14 +443,17 @@ if __name__ == '__main__':
 
   # import pdb; pdb.set_trace()
 
-  layer = ShiftScale(input_shape=x.shape[1:],
-                     key=key)
+  # layer = ShiftScale(input_shape=x.shape[1:],
+  #                    key=key)
+  layer = CaleyOrthogonalMVP(input_shape=x.shape[1:],
+                             key=key)
 
   x = random.normal(key, shape=(2, 2, 2, 2))
   layer = layer.data_dependent_init(x, key=key)
 
   # layer = PLUAffine(x=x, key=key)
   z, log_det = eqx.filter_vmap(layer)(x)
+  import pdb; pdb.set_trace()
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)

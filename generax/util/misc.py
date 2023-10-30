@@ -9,6 +9,48 @@ import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray, PyTree
 import einops
 
+__all__ = ['broadcast_to_first_axis',
+           'last_axes',
+           'get_reduce_axes',
+           'index_list',
+           'tree_shapes',
+           'square_plus',
+           'square_sigmoid',
+           'square_swish',
+           'only_gradient',
+           'mean_and_std',
+           'mean_and_inverse_std',
+           'list_prod',
+           'whiten',
+           'extract_multiple_batches_from_iterator',
+           'ensure_path_exists',
+           'conv']
+
+################################################################################################################
+
+def broadcast_to_first_axis(x, ndim):
+  if x.ndim == 0:
+    return x
+  return jnp.expand_dims(x, axis=tuple(range(1, ndim)))
+
+def last_axes(shape):
+  return tuple(range(-1, -1 - len(shape), -1))
+
+def get_reduce_axes(axes, ndim, offset=0):
+  if isinstance(axes, int):
+    axes = (axes,)
+  keep_axes = [ax%ndim for ax in axes]
+  reduce_axes = tuple([ax + offset for ax in range(ndim) if ax not in keep_axes])
+  return reduce_axes
+
+def index_list(shape, axis):
+  ndim = len(shape)
+  axis = [ax%ndim for ax in axis]
+  shapes = [s for i, s in enumerate(shape) if i in axis]
+  return tuple(shapes)
+
+################################################################################################################
+
 def tree_shapes(pytree):
   return jax.tree_util.tree_map(lambda x: x.shape, pytree)
 
@@ -26,6 +68,9 @@ def square_swish(x, gamma=0.5):
   x2 = x**2
   out = 0.5*(x + x2*jax.lax.rsqrt(x2 + 4*gamma))
   return out
+
+def only_gradient(x):
+  return x - jax.lax.stop_gradient(x)
 
 def mean_and_std(x, axis=-1, keepdims=False):
   mean = jnp.mean(x, axis=axis, keepdims=keepdims)
@@ -58,22 +103,6 @@ def extract_multiple_batches_from_iterator(it: Iterator,
     out = jax.tree_util.tree_map(lambda x: einops.rearrange(x, 'n b ... -> (n b) ...'), out)
   return out
 
-class ZeroInit(eqx.Module):
-
-  w: Array
-
-  def __init__(self,
-               *_,
-               x: Array,
-               y: Optional[Array] = None,
-               key: PRNGKeyArray,
-               **kwargs):
-    self.w = random.normal(key, (1,))*0.01
-
-  def __call__(self, x: Array, **kwargs) -> Array:
-    return x*self.w
-
-
 
 import pickle
 from pathlib import Path
@@ -81,3 +110,19 @@ from typing import Union
 
 def ensure_path_exists(path):
   Path(path).mkdir(parents=True, exist_ok=True)
+
+def conv(w, x):
+  no_batch = False
+  if x.ndim == 3:
+    no_batch = True
+    x = x[None]
+  out = jax.lax.conv_general_dilated(x,
+                                     w,
+                                     window_strides=(1, 1),
+                                     padding="SAME",
+                                     lhs_dilation=(1, 1),
+                                     rhs_dilation=(1, 1),
+                                     dimension_numbers=("NHWC", "HWIO", "NHWC"))
+  if no_batch:
+    out = out[0]
+  return out

@@ -7,9 +7,10 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 import numpy as np
+import generax.util as util
 
 __all__ = ['RationalQuadraticSpline',]
 
@@ -123,7 +124,7 @@ def get_knot_params(settings, theta):
   tw, th = jax.nn.softmax(tw, axis=-1), jax.nn.softmax(th, axis=-1)
   tw = min_width + (1.0 - min_width*K)*tw
   th = min_height + (1.0 - min_height*K)*th
-  td = min_derivative + util.square_plus(td)
+  td = min_derivative + misc.square_plus(td)
   knot_x, knot_y = jnp.cumsum(tw, axis=-1), jnp.cumsum(th, axis=-1)
 
   # Pad the knots so that the first element is 0
@@ -194,7 +195,7 @@ class RationalQuadraticSpline(BijectiveTransform):
     self.min_derivative = min_derivative
     self.bounds = bounds
 
-    x_dim = input_shape[-1]
+    x_dim = util.list_prod(input_shape)
     self.theta = random.normal(key, shape=(x_dim*(3*self.K - 1),))*0.1
 
   def __call__(self,
@@ -212,6 +213,9 @@ class RationalQuadraticSpline(BijectiveTransform):
     `(z, log_det)`
     """
     assert x.shape == self.input_shape, 'Only works on unbatched data'
+
+    # Flatten x
+    x = x.ravel()
 
     # Get the parameters
     settings = self.K, self.min_width, self.min_height, self.min_derivative, self.bounds
@@ -233,7 +237,10 @@ class RationalQuadraticSpline(BijectiveTransform):
 
     log_det = elementwise_log_det.sum()
     if inverse:
-      log_det *= -1
+      log_det = -log_det
+
+    # Unflatten the output
+    z = z.reshape(self.input_shape)
 
     return z, log_det
 

@@ -74,7 +74,7 @@ class NeuralODE(eqx.Module):
     - `z`: The output of the neural ODE.
     - `log_likelihood`: The log likelihood of the neural ODE if `log_likelihood=True`.
     """
-    assert x.ndim == 1, "x must be unbatched"
+    assert x.shape == self.vector_field.input_shape
 
     if trace_estimate_likelihood:
       # Get a random vector for hutchinsons trace estimator
@@ -106,15 +106,20 @@ class NeuralODE(eqx.Module):
           dlogpxdt = -jnp.sum(dudxv*v)
         else:
           # Brute force dlogpx/dt.  See NeuralODE https://arxiv.org/pdf/1806.07366.pdf
-          eye = jnp.eye(x.shape[-1])
-          def jvp(dx):
-            dx = jnp.broadcast_to(dx, x.shape)
-            dxdt, d2dx_dtdx = jax.jvp(apply_vf, (x,), (dx,))
-            return dxdt, d2dx_dtdx
+          x_flat = x.ravel()
+          eye = jnp.eye(x_flat.shape[-1])
+          x_shape = x.shape
 
-          dxdt, d2dx_dtdx = jax.vmap(jvp)(eye)
+          def jvp_flat(x_flat, dx_flat):
+            x = x_flat.reshape(x_shape)
+            dx = dx_flat.reshape(x_shape)
+            dxdt, d2dx_dtdx = jax.jvp(apply_vf, (x,), (dx,))
+            return dxdt, d2dx_dtdx.ravel()
+
+          dxdt, d2dx_dtdx_flat = jax.vmap(jvp_flat, in_axes=(None, 0))(x_flat, eye)
           dxdt = dxdt[0]
-          dlogpxdt = -jnp.trace(d2dx_dtdx)
+          dlogpxdt = -jnp.trace(d2dx_dtdx_flat)
+
       else:
         # Don't worry about the log likelihood
         dxdt = apply_vf(x)
@@ -144,7 +149,7 @@ class NeuralODE(eqx.Module):
                                    t0=t0,
                                    t1=t1,
                                    dt0=0.0001,
-                                   y0=(x, jnp.zeros(1)),
+                                   y0=(x, jnp.array(0.0)),
                                    args=params,
                                    adjoint=self.adjoint,
                                    stepsize_controller=self.stepsize_controller,
@@ -156,6 +161,7 @@ class NeuralODE(eqx.Module):
       outs = jax.tree_util.tree_map(lambda x: x[0], outs)
 
     z, log_px = outs
+    assert log_px.shape == ()
 
     if inverse:
       log_px = -log_px

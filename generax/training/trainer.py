@@ -8,7 +8,7 @@ import optax
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 import tqdm
-import generax.nn.util as util
+import generax.util.misc as misc
 import os
 
 class TrainingState(eqx.Module):
@@ -39,7 +39,7 @@ class Checkpointer(eqx.Module):
                save_path: str):
     self.save_path = save_path
     self.model_folder = os.path.join(save_path, 'models')
-    util.ensure_path_exists(self.model_folder)
+    misc.ensure_path_exists(self.model_folder)
 
   @property
   def saved_model_path(self):
@@ -169,7 +169,7 @@ class Trainer(eqx.Module):
         train_state, aux = train_step(train_state, data)
         pbar.update(1)
       else:
-        data = util.extract_multiple_batches_from_iterator(data_iterator, double_batch)
+        data = misc.extract_multiple_batches_from_iterator(data_iterator, double_batch)
         params, static = eqx.partition(train_state, eqx.is_array)
         params, aux = scan_step(params, data)
         train_state = eqx.combine(params, static)

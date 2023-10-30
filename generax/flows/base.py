@@ -7,7 +7,7 @@ import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
-import generax.nn.util as util
+import generax.util.misc as misc
 
 __all__ = ['BijectiveTransform',
            'Sequential']
@@ -172,7 +172,7 @@ class Sequential(BijectiveTransform):
     **Returns**:
     A new layer with the parameters initialized.
     """
-    assert x.shape[1:] == self.input_shape, 'Only works on unbatched data'
+    assert x.shape[1:] == self.input_shape, 'Only works on batched data'
 
     # We need to initialize each of the layers
     keys = random.split(key, self.n_layers)

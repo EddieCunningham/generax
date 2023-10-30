@@ -5,8 +5,6 @@ from functools import partial
 from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
-from abc import ABC, abstractmethod
-import diffrax
 from jaxtyping import Array, PRNGKeyArray
 from generax.flows.base import BijectiveTransform, Sequential
 
@@ -20,102 +18,77 @@ from generax.flows.affine import ShiftScale, PLUAffine
 from generax.flows.reshape import Reverse
 from generax.distributions.base import Gaussian
 from generax.flows.spline import RationalQuadraticSpline
-from generax.nn.resnet_1d import ResNet1d
+from generax.nn.resnet import ResNet
 
-class RealNVPTransform(Sequential):
+class GeneralTransform(Sequential):
 
   def __init__(self,
+               TransformType: type,
                input_shape: Tuple[int],
                n_flow_layers: int = 3,
                working_size: int = 16,
                hidden_size: int = 32,
                n_blocks: int = 4,
+               filter_shape: Optional[Tuple[int]] = (3, 3),
                cond_shape: Optional[Tuple[int]] = None,
                *,
                key: PRNGKeyArray,
                **kwargs):
 
     # Build a dummy transfom to get the input and output shapes
-    transform = ShiftScale(input_shape=input_shape, key=key)
-    transform_input_shape, net_input_shape, net_output_size = Coupling.get_net_input_and_output_shapes(input_shape, transform)
+    transform_input_shape, net_input_shape = Coupling.get_split_shapes(input_shape)
+    transform = TransformType(input_shape=transform_input_shape,
+                              key=key)
+    net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
 
-    if len(input_shape) == 1:
-      def create_net(key):
-        return ResNet1d(in_size=net_input_shape[-1],
-                      working_size=working_size,
-                      hidden_size=hidden_size,
-                      out_size=net_output_size,
-                      n_blocks=n_blocks,
-                      cond_size=cond_shape,
-                      key=key)
-    else:
-      raise NotImplementedError(f'Only implemented for 1d inputs')
+    if len(net_input_shape) == 3:
+      H, W, C = net_input_shape
+      assert net_output_size%(H*W) == 0
+      net_output_size = net_output_size // (H*W)
+
+    def create_net(key):
+      return ResNet(input_shape=net_input_shape,
+                    working_size=working_size,
+                    hidden_size=hidden_size,
+                    out_size=net_output_size,
+                    n_blocks=n_blocks,
+                    filter_shape=filter_shape,
+                    cond_shape=cond_shape,
+                    key=key)
 
     layers = []
     keys = random.split(key, n_flow_layers)
     for i, k in enumerate(keys):
       k1, k2, k3, k4 = random.split(k, 4)
-      transform = ShiftScale(transform_input_shape, key=k1)
+      transform = TransformType(input_shape=transform_input_shape,
+                                key=k1)
       layer = Coupling(transform,
-               create_net(k2),
-               input_shape=input_shape,
-               cond_shape=cond_shape,
-               key=k2)
+                       create_net(k2),
+                       input_shape=input_shape,
+                       cond_shape=cond_shape,
+                       key=k2)
       layers.append(layer)
       layers.append(PLUAffine(input_shape=input_shape, key=k3))
       layers.append(ShiftScale(input_shape=input_shape, key=k4))
 
     super().__init__(*layers, **kwargs)
 
-class NeuralSplineTransform(Sequential):
-
+class RealNVPTransform(GeneralTransform):
   def __init__(self,
-               input_shape: Tuple[int],
-               n_flow_layers: int = 3,
-               working_size: int = 16,
-               hidden_size: int = 32,
-               n_blocks: int = 4,
+               *args,
+               **kwargs):
+    super().__init__(TransformType=ShiftScale,
+                     *args,
+                     **kwargs)
+
+class NeuralSplineTransform(GeneralTransform):
+  def __init__(self,
+               *args,
                n_spline_knots: int = 8,
-               cond_shape: Optional[Tuple[int]] = None,
-               *,
-               key: PRNGKeyArray,
                **kwargs):
-
-    # Build a dummy transfom to get the input and output shapes
-    transform = RationalQuadraticSpline(input_shape=input_shape,
-                                        K=n_spline_knots,
-                                        key=key)
-    transform_input_shape, net_input_shape, net_output_size = Coupling.get_net_input_and_output_shapes(input_shape, transform)
-
-    if len(input_shape) == 1:
-      def create_net(key):
-        return ResNet1d(in_size=net_input_shape[-1],
-                      working_size=working_size,
-                      hidden_size=hidden_size,
-                      out_size=net_output_size,
-                      n_blocks=n_blocks,
-                      cond_size=cond_shape,
-                      key=key)
-    else:
-      raise NotImplementedError(f'Only implemented for 1d inputs')
-
-    layers = []
-    keys = random.split(key, n_flow_layers)
-    for i, k in enumerate(keys):
-      k1, k2, k3, k4 = random.split(k, 4)
-      transform = RationalQuadraticSpline(transform_input_shape,
-                                          K=n_spline_knots,
-                                          key=k1)
-      layer = Coupling(transform,
-               create_net(k2),
-               input_shape=input_shape,
-               cond_shape=cond_shape,
-               key=k2)
-      layers.append(layer)
-      layers.append(PLUAffine(input_shape=input_shape, key=k3))
-      layers.append(ShiftScale(input_shape=input_shape, key=k4))
-
-    super().__init__(*layers, **kwargs)
+    super().__init__(TransformType=partial(RationalQuadraticSpline, K=n_spline_knots),
+                     *args,
+                     **kwargs)
 
 ################################################################################################################
 
