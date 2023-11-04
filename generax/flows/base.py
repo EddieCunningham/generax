@@ -10,6 +10,7 @@ from jaxtyping import Array, PRNGKeyArray
 import generax.util.misc as misc
 
 __all__ = ['BijectiveTransform',
+           'TimeDependentBijectiveTransform',
            'Sequential']
 
 class BijectiveTransform(eqx.Module, ABC):
@@ -94,7 +95,8 @@ class BijectiveTransform(eqx.Module, ABC):
 
   def inverse(self,
               x: Array,
-              y: Optional[Array] = None) -> Array:
+              y: Optional[Array] = None,
+              **kwargs) -> Array:
     """Apply the inverse transformation.
 
     **Arguments**:
@@ -105,7 +107,84 @@ class BijectiveTransform(eqx.Module, ABC):
     **Returns**:
     (z, log_det)
     """
-    return self(x, y=y, inverse=True)
+    return self(x, y=y, inverse=True, **kwargs)
+
+################################################################################################################
+
+class TimeDependentBijectiveTransform(BijectiveTransform):
+  """Time dependent bijective transform.  This will help us build simple probability paths.
+  Non-inverse mode goes t -> 0 while inverse mode goes t -> 1.
+
+  **Atributes**:
+
+  - `input_shape`: The input shape.  Output shape will have the same dimensionality
+                  as the input.
+  - `cond_shape`: The shape of the conditioning information.  If there is no
+                  conditioning information, this is None.
+
+  **Methods**:
+
+  - `__call__(x,y,inverse) -> (z,log_det)`: Apply the transformation to the input.
+    - `x`: Input array of shape `input_shape`
+    - `y`: Conditioning information of shape `cond_shape`
+    - `inverse`: Whether to invert the transformation
+    - `z`: The transformed input
+    - `log_det`: The log determinant of the Jacobian
+  """
+
+  def data_dependent_init(self,
+                          t: Array,
+                          xt: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None):
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `t`: Time.
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    return self
+
+  @abstractmethod
+  def __call__(self,
+               t: Array,
+               xt: Array,
+               y: Optional[Array] = None,
+               inverse: bool=False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `xt`: The input to the transformation.  If inverse=True, then should be x0
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (x0, log_det)
+    """
+    pass
+
+  def inverse(self,
+              t: Array,
+              x0: Array,
+              y: Optional[Array] = None,
+              **kwargs) -> Array:
+    """Apply the inverse transformation.
+
+    **Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+
+    **Returns**:
+    (xt, log_det)
+    """
+    return self(t, x0, y=y, inverse=True, **kwargs)
 
 ################################################################################################################
 

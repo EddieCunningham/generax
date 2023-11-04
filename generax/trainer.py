@@ -180,7 +180,7 @@ class Trainer(eqx.Module):
       pbar.set_description(f'loss: {loss:.4f}')
 
       # Checkpoint the model
-      if (i and (i%checkpoint_every == 0)) or (i == num_steps - 1):
+      if (i and (i%checkpoint_every == 0)):
         self.checkpoint(train_state)
         print('Checkpointed model')
 
@@ -188,6 +188,9 @@ class Trainer(eqx.Module):
       if (i%test_every == 0) or (i == num_steps - 1):
         evaluate_model(train_state.model)
 
+    # Final checkpoint
+    self.checkpoint(train_state)
+    print('Checkpointed model')
     return train_state.model
 
   def checkpoint(self, train_state: TrainingState):

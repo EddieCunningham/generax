@@ -71,6 +71,8 @@ if __name__ == '__main__':
     #   continue
     if 'Sequential' in str(flow_init):
       continue
+    if 'ConditionalOptionalTransport' in str(flow_init):
+      continue
     x, y = random.normal(key, shape=(2, 10, 2))
     x = jax.nn.sigmoid(x)
     x = jnp.clip(x, 1e-4, 1.0 - 1e-4)

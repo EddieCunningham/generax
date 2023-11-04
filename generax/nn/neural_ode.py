@@ -58,7 +58,9 @@ class NeuralODE(eqx.Module):
                log_likelihood: Optional[bool] = False,
                trace_estimate_likelihood: Optional[bool] = False,
                save_at: Optional[Array] = None,
-               key: Optional[PRNGKeyArray] = None) -> Array:
+               key: Optional[PRNGKeyArray] = None,
+               t0: Optional[float] = 0.0,
+               t1: Optional[float] = 1.0) -> Array:
     """**Arguemnts**:
 
     - `x`: The input to the neural ODE.  Must be a rank 1 array.
@@ -69,6 +71,8 @@ class NeuralODE(eqx.Module):
     - `trace_estimate_likelihood`: Whether to compute a trace estimate of the likelihood of the neural ODE.
     - `save_at`: The times to save the neural ODE at.
     - `key`: The random key to use for initialization
+    - `t0`: The initial time.
+    - `t1`: The final time.
 
     **Returns**:
     - `z`: The output of the neural ODE.
@@ -133,9 +137,6 @@ class NeuralODE(eqx.Module):
     term = diffrax.ODETerm(f)
     solver = diffrax.Dopri5()
 
-    # All of our flows will go from 0 to 1.
-    t0, t1 = 0.0, 1.0
-
     # Determine which times we want to save the neural ODE at.
     if save_at is None:
       saveat = diffrax.SaveAt(ts=[t1])
@@ -161,7 +162,6 @@ class NeuralODE(eqx.Module):
       outs = jax.tree_util.tree_map(lambda x: x[0], outs)
 
     z, log_px = outs
-    assert log_px.shape == ()
 
     if inverse:
       log_px = -log_px

@@ -24,9 +24,13 @@ __all__ = ['broadcast_to_first_axis',
            'whiten',
            'extract_multiple_batches_from_iterator',
            'ensure_path_exists',
-           'conv']
+           'conv',
+           'unbatch']
 
 ################################################################################################################
+
+def unbatch(pytree):
+  return jax.tree_util.tree_map(lambda x: x[0], pytree)
 
 def broadcast_to_first_axis(x, ndim):
   if x.ndim == 0:

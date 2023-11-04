@@ -10,7 +10,6 @@ from jaxtyping import Array, PRNGKeyArray
 import generax.util.misc as misc
 from generax.flows.base import BijectiveTransform
 import numpy as np
-import optimistix as optx
 import generax.util as util
 
 __all__ = ['LogisticCDFMixtureLogit']

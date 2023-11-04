@@ -92,7 +92,8 @@ class FFJORDTransform(BijectiveTransform):
                y: Optional[Array] = None,
                inverse: bool = False,
                log_likelihood: bool = True,
-               key: Optional[PRNGKeyArray] = None) -> Array:
+               key: Optional[PRNGKeyArray] = None,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The input to the transformation
@@ -119,7 +120,8 @@ class FFJORDTransform(BijectiveTransform):
                                  log_likelihood=log_likelihood,
                                  trace_estimate_likelihood=trace_estimate_likelihood,
                                  save_at=None,
-                                 key=key)
+                                 key=key,
+                                 **kwargs)
     return z, log_det
 
 ################################################################################################################

@@ -8,14 +8,15 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
 import generax.util.misc as misc
-from generax.flows.base import BijectiveTransform
+from generax.flows.base import *
 import numpy as np
 
 __all__ = ['ShiftScale',
            'DenseLinear',
            'DenseAffine',
            'CaleyOrthogonalMVP',
-           'PLUAffine',]
+           'PLUAffine',
+           'ConditionalOptionalTransport']
 
 class ShiftScale(BijectiveTransform):
   """This represents a shift and scale transformation.
@@ -424,6 +425,63 @@ class PLUAffine(BijectiveTransform):
 
 ################################################################################################################
 
+class ConditionalOptionalTransport(TimeDependentBijectiveTransform):
+  """Given x1, compute f(t, x0) = t*x1 + (1-t)*x0.  This is the optimal transport
+  map between the two points.  Used in flow matching https://arxiv.org/pdf/2210.02747.pdf
+
+  Non-inverse mode goes t -> 0 while inverse mode goes t -> 1.
+
+  **Attributes**:
+  """
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+
+  def __call__(self,
+               t: Array,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool=False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `t`: The time point.
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to invert the transformation (0 -> t)
+
+    **Returns**:
+    `(z, log_det)`
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+    if y is None:
+      raise ValueError(f'Expected a conditional input')
+    if y.shape != x.shape:
+      raise ValueError(f'Expected y.shape ({y.shape}) to match x.shape ({x.shape})')
+
+    x1 = y
+    if inverse:
+      x0 = x
+      xt = (1 - t)*x0 + t*x1
+      log_det = jnp.log(1 - t)
+      return xt, log_det
+    else:
+      xt = x
+      x0 = (xt - t*x1)/(1 - t)
+      log_det = -jnp.log(1 - t)
+      return x0, log_det
+
+################################################################################################################
+
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
@@ -432,28 +490,19 @@ if __name__ == '__main__':
   jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
-  x = random.normal(key, shape=(10, 2, 2, 2))
-
-  # composition = Sequential(ShiftScale,
-  #                          ShiftScale,
-  #                          ShiftScale,
-  #                          x=x,
-  #                          key=key)
-  # z, log_det = eqx.filter_vmap(composition)(x)
-
-  # import pdb; pdb.set_trace()
+  x, y = random.normal(key, shape=(2, 10, 2, 2, 2))
 
   # layer = ShiftScale(input_shape=x.shape[1:],
   #                    key=key)
   layer = CaleyOrthogonalMVP(input_shape=x.shape[1:],
                              key=key)
+  # layer = ConditionalOptionalTransport(input_shape=x.shape[1:],
+  #                                      key=key)
 
-  x = random.normal(key, shape=(2, 2, 2, 2))
-  layer = layer.data_dependent_init(x, key=key)
+  # x = random.normal(key, shape=(2, 2, 2, 2))
+  # layer = layer.data_dependent_init(x, key=key)
 
   # layer = PLUAffine(x=x, key=key)
-  z, log_det = eqx.filter_vmap(layer)(x)
-  import pdb; pdb.set_trace()
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)
