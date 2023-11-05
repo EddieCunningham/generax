@@ -33,10 +33,10 @@ def freeu_filter(x, threshold, scale):
 
 class TimeDependentUNet(eqx.Module):
 
-  input_shape: Tuple[int]
-  dim: int
-  dim_mults: Tuple[int]
-  in_out: Tuple[Tuple[int, int]]
+  input_shape: Tuple[int] = eqx.field(static=True)
+  dim: int = eqx.field(static=True)
+  dim_mults: Tuple[int] = eqx.field(static=True)
+  in_out: Tuple[Tuple[int, int]] = eqx.field(static=True)
   conv_in: WeightNormConv
   time_features: TimeFeatures
 
@@ -44,6 +44,7 @@ class TimeDependentUNet(eqx.Module):
   middle_blocks: Tuple[Union[ImageResBlock, AttentionBlock]]
   up_blocks: Tuple[Union[ImageResBlock, AttentionBlock, Upsample]]
   final_block: ImageResBlock
+  proj_out: WeightNormConv
 
   def __init__(self,
                input_shape: Tuple[int],
@@ -134,11 +135,14 @@ class TimeDependentUNet(eqx.Module):
       up_blocks.append(make_resblock(k2, (H, W, dim_in + dim_in), dim_in))
       up_blocks.append(make_attention(key, (H, W, dim_in)))
 
-
     self.up_blocks = up_blocks
 
     # Final
     self.final_block = make_resblock(next(key_iter), (H, W, dim_in + dim_in), dim_in)
+    self.proj_out = WeightNormConv(input_shape=(H, W, dim_in),
+                                    out_size=C,
+                                    filter_shape=(1, 1),
+                                    key=next(key_iter))
 
   def __call__(self,
                t: Array,
@@ -178,8 +182,6 @@ class TimeDependentUNet(eqx.Module):
     h = attn_block(h)
     h = res_block2(h)
 
-    hs_shapes = util.tree_shapes(hs)
-
     # Upsampling
     block_iter = iter(self.up_blocks)
     for i, (dim_in, dim_out) in enumerate(self.in_out[::-1]):
@@ -202,6 +204,7 @@ class TimeDependentUNet(eqx.Module):
     h_in = hs.pop()
     h = jnp.concatenate([h, h_in], axis=-1)
     h = self.final_block(h, time_emb)
+    h = self.proj_out(h)
 
     assert len(hs) == 0
 
