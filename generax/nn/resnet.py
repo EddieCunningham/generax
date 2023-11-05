@@ -5,7 +5,7 @@ import jax.random as random
 from jaxtyping import Array, PRNGKeyArray
 import equinox as eqx
 import jax.numpy as jnp
-from generax.nn.layers import WeightNormDense, WeightNormConv
+from generax.nn.layers import *
 from generax.nn.resnet_blocks import GatedResBlock
 
 __all__ = ['ResNet',
@@ -80,9 +80,10 @@ class ResNet(eqx.Module):
                                           key=k1)
       working_shape = (working_size,)
     else:
-      self.in_projection = WeightNormConv(input_shape=input_shape,
+      self.in_projection = ConvAndGroupNorm(input_shape=input_shape,
                                         out_size=working_size,
                                         filter_shape=filter_shape,
+                                        groups=1,
                                         key=k1)
       working_shape = (H, W, working_size)
 
@@ -102,9 +103,10 @@ class ResNet(eqx.Module):
                                             out_size=out_size,
                                             key=k3)
     else:
-      self.out_projection = WeightNormConv(input_shape=working_shape,
+      self.out_projection = ConvAndGroupNorm(input_shape=working_shape,
                                            out_size=out_size,
                                            filter_shape=filter_shape,
+                                           groups=1,
                                            key=k3)
 
   def data_dependent_init(self,

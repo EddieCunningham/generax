@@ -115,18 +115,26 @@ from typing import Union
 def ensure_path_exists(path):
   Path(path).mkdir(parents=True, exist_ok=True)
 
-def conv(w, x):
+def conv(w,
+         x,
+         stride=1,
+         padding='SAME'):
   no_batch = False
   if x.ndim == 3:
     no_batch = True
     x = x[None]
+
+  if isinstance(padding, int):
+    padding = ((padding, padding), (padding, padding))
+
   out = jax.lax.conv_general_dilated(x,
                                      w,
-                                     window_strides=(1, 1),
-                                     padding="SAME",
+                                     window_strides=(stride, stride),
+                                     padding=padding,
                                      lhs_dilation=(1, 1),
                                      rhs_dilation=(1, 1),
                                      dimension_numbers=("NHWC", "HWIO", "NHWC"))
   if no_batch:
     out = out[0]
   return out
+

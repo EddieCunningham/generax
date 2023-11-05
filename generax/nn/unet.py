@@ -1,143 +1,233 @@
 from collections.abc import Callable
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, Tuple
 import jax
 import jax.random as random
 from jaxtyping import Array, PRNGKeyArray
 import equinox as eqx
 import jax.numpy as jnp
-from generax.nn.time_condition import TimeFeatures
+from generax.nn.layers import *
+from generax.nn.resnet_blocks import *
+from generax.nn.time_condition import *
+import generax.util as util
 
-class ResBlock(eqx.Module):
-    """Residual block"""
-    linear_cond: eqx.nn.Linear
-    linear1: eqx.nn.Linear
-    linear2: eqx.nn.Linear
+def freeu_filter(x, threshold, scale):
+  """https://arxiv.org/pdf/2309.11497.pdf"""
 
-    activation: Callable
-    in_size: int = eqx.field(static=True)
-    cond_size: int = eqx.field(static=True)
-    hidden_size: int = eqx.field(static=True)
+  H, W, C = x.shape
+  # FFT
+  x_freq = jnp.fft.fftn(x, dim=(0, 1))
+  x_freq = jnp.fft.fftshift(x_freq, dim=(0, 1))
 
-    def __init__(
-        self,
-        in_size: int,
-        cond_size: int,
-        hidden_size: int,
-        activation: Callable = jax.nn.swish,
-        *,
-        key: PRNGKeyArray,
-        **kwargs,
-    ):
-      """**Arguments**:
+  mask = jnp.ones_like(x_freq)
 
-      - `in_size`: The input size.  Output size is the same as in_size.
-      - `cond_size`: The size of the conditioning input.
-      - `hidden_size`: The hidden layer size.
-      - `activation`: The activation function after each hidden layer.
-      - `key`: A `jax.random.PRNGKey` for initialization
-      """
-      super().__init__(**kwargs)
+  crow, ccol = H // 2, W //2
+  t = threshold
+  mask = mask.at[crow-t:crow+t,ccol-t:ccol+t,:].set(scale)
+  x_freq = x_freq * mask
 
-      out_size = in_size
-      self.in_size = in_size
-      self.cond_size = cond_size
-      self.hidden_size = hidden_size
+  # IFFT
+  x_freq = jnp.fft.ifftshift(x_freq, dim=(0, 1))
+  x_filtered = jnp.fft.ifftn(x_freq, dim=(0, 1)).real
 
-      k1, k2, k3 = random.split(key, 3)
-      self.linear_cond = eqx.nn.Linear(cond_size, 2*hidden_size, use_bias=True, key=k1)
-      self.linear1 = eqx.nn.Linear(in_size, hidden_size, use_bias=True, key=k2)
-      self.linear2 = eqx.nn.Linear(hidden_size, out_size, use_bias=True, key=k3)
-
-      self.activation = activation
-
-    def __call__(self, x: Array, cond: Array) -> Array:
-      """**Arguments:**
-
-      - `x`: A JAX array with shape `(in_size,)`.
-      - `cond`: A JAX array to condition on with shape `(cond_size,)`.
-
-      **Returns:**
-      A JAX array with shape `(in_size,)`.
-      """
-      # The conditioning input will shift/scale x
-      h = self.linear_cond(cond)
-      shift, scale = jnp.split(h, 2, axis=-1)
-
-      # Linear + norm + shift/scale + activation
-      x = self.linear1(x)
-      x = shift + x*(1 + scale)
-      x = self.activation(x)
-
-      # Linear + norm + activation
-      x = self.linear2(x)
-      x = self.activation(x)
-      return x
+  return x_filtered
 
 class TimeDependentUNet(eqx.Module):
-    """ResNet that is conditioned on time"""
 
-    blocks: tuple[ResBlock, ...]
-    n_blocks: int = eqx.field(static=True)
-    time_features: TimeFeatures
+  input_shape: Tuple[int]
+  dim: int
+  dim_mults: Tuple[int]
+  in_out: Tuple[Tuple[int, int]]
+  conv_in: WeightNormConv
+  time_features: TimeFeatures
 
-    def __init__(
-        self,
-        in_size: int,
-        hidden_size: int,
-        n_blocks: int,
-        time_embedding_size: int,
-        activation: Callable = jax.nn.swish,
-        *,
-        key: PRNGKeyArray,
-        **kwargs,
-    ):
-      """**Arguments**:
+  down_blocks: Tuple[Union[ImageResBlock, AttentionBlock, Downsample]]
+  middle_blocks: Tuple[Union[ImageResBlock, AttentionBlock]]
+  up_blocks: Tuple[Union[ImageResBlock, AttentionBlock, Upsample]]
+  final_block: ImageResBlock
 
-      - `in_size`: The input size.  Output size is the same as in_size.
-      - `hidden_size`: The size of each hidden layer.
-      - `n_blocks`: The number of residual blocks.
-      - `time_embedding_size`: The size of the time embedding.
-      - `activation`: The activation function in each residual block.
-      - `key`: A `jax.random.PRNGKey` for initialization.
-      """
-      super().__init__(**kwargs)
-      self.n_blocks = n_blocks
+  def __init__(self,
+               input_shape: Tuple[int],
+               dim: int = 16,
+               dim_mults: Tuple[int] = (1, 2, 4, 8),
+               resnet_block_groups: int = 8,
+               attn_heads: int = 4,
+               attn_dim_head: int = 32,
+               *,
+               key: PRNGKeyArray):
 
-      cond_size = 4*time_embedding_size
-      self.time_features = TimeFeatures(embedding_size=time_embedding_size,
-                                        out_features=cond_size,
-                                        key=key)
+    H, W, C = input_shape
+    if H//(2**dim_mults[-1]) == 0:
+      raise ValueError(f"Image size {(H, W)} is too small for {len(dim_mults)} downsamples.")
+    self.input_shape = input_shape
+    self.dim = dim
+    self.dim_mults = dim_mults
 
-      keys = random.split(key, n_blocks)
+    keys = random.split(key, 20)
+    key_iter = iter(keys)
 
-      make_block = lambda k: ResBlock(in_size=in_size,
-                                      cond_size=cond_size,
-                                      hidden_size=hidden_size,
-                                      activation=activation,
-                                      key=k)
-      self.blocks = eqx.filter_vmap(make_block)(keys)
+    self.conv_in = WeightNormConv(input_shape=input_shape,
+                                  out_size=self.dim,
+                                  filter_shape=(7, 7),
+                                  padding=3,
+                                  key=next(key_iter))
 
-    def __call__(self, t: Array, x: Array) -> Array:
-      """**Arguments:**
+    self.time_features = TimeFeatures(embedding_size=self.dim,
+                                      out_features=4*self.dim,
+                                      key=next(key_iter))
+    time_shape = (4*self.dim,)
 
-      - `t`: A JAX array with shape `()`.
-      - `x`: A JAX array with shape `(in_size,)`.
+    def make_resblock(key, input_shape, dim_out):
+      return ImageResBlock(input_shape=input_shape,
+                           hidden_size=dim_out,
+                           out_size=dim_out,
+                           groups=resnet_block_groups,
+                           cond_shape=time_shape,
+                           key=key)
 
-      **Returns:**
+    def make_attention(key, input_shape, linear=True):
+      return AttentionBlock(input_shape=input_shape,
+                            heads=attn_heads,
+                            dim_head=attn_dim_head,
+                            key=key,
+                            use_linear_attention=linear)
 
-      A JAX array with shape `(in_size,)`.
-      """
-      t = jnp.array(t)
-      assert t.shape == ()
-      assert x.ndim == 1
+    # Downsampling
+    down_blocks = []
+    dims = [self.dim] + [self.dim*mult for mult in self.dim_mults]
+    self.in_out = list(zip(dims[:-1], dims[1:]))
+    keys = random.split(next(key_iter), len(self.in_out))
+    for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out)):
+      k1, k2 = random.split(key, 2)
+      down_blocks.append(make_resblock(k1, (H, W, dim_in), dim_in))
+      down_blocks.append(make_resblock(k2, (H, W, dim_in), dim_in))
+      down_blocks.append(make_attention(key, (H, W, dim_in)))
 
-      # Featurize the time
-      t_emb = self.time_features(t)
+      down = Downsample(input_shape=(H, W, dim_in),
+                        out_size=dim_out,
+                        key=key)
+      down_blocks.append(down)
+      H, W = H//2, W//2
+    self.down_blocks = down_blocks
 
-      dynamic, static = eqx.partition(self.blocks, eqx.is_array)
-      def f(x, params):
-          block = eqx.combine(params, static)
-          return block(x, t_emb), None
+    # Middle
+    middle_blocks = []
+    middle_blocks.append(make_resblock(next(key_iter), (H, W, dim_out), dim_out))
+    middle_blocks.append(make_attention(next(key_iter), (H, W, dim_out), linear=False))
+    middle_blocks.append(make_resblock(next(key_iter), (H, W, dim_out), dim_out))
+    self.middle_blocks = middle_blocks
 
-      out, _ = jax.lax.scan(f, x, dynamic)
-      return out
+    # Upsampling
+    keys = random.split(next(key_iter), len(self.in_out))
+    up_blocks = []
+    last_dim = dim_out
+    for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out[::-1])):
+      k1, k2 = random.split(key, 2)
+
+      up = Upsample(input_shape=(H, W, dim_out),
+                    out_size=dim_in,
+                    key=key)
+      up_blocks.append(up)
+      H, W = H*2, W*2
+
+      # Skip connections contribute a dim_in
+      up_blocks.append(make_resblock(k1, (H, W, dim_in + dim_in), dim_in))
+      up_blocks.append(make_resblock(k2, (H, W, dim_in + dim_in), dim_in))
+      up_blocks.append(make_attention(key, (H, W, dim_in)))
+
+
+    self.up_blocks = up_blocks
+
+    # Final
+    self.final_block = make_resblock(next(key_iter), (H, W, dim_in + dim_in), dim_in)
+
+  def __call__(self,
+               t: Array,
+               x: Array,
+               y: Array = None) -> Array:
+
+    assert t.shape == ()
+    assert x.shape == self.input_shape
+
+    # Time embedding
+    time_emb = self.time_features(t)
+
+    hs = []
+
+    # Initial convolution
+    h = self.conv_in(x)
+    hs.append(h)
+
+    # Downsampling
+    block_iter = iter(self.down_blocks)
+    for i, (dim_in, dim_out) in enumerate(self.in_out):
+      # Resnet block
+      h = next(block_iter)(h, time_emb)
+      hs.append(h)
+
+      # Resnet block + attention block
+      h = next(block_iter)(h, time_emb)
+      h = next(block_iter)(h)
+      hs.append(h)
+
+      # Downsample
+      h = next(block_iter)(h)
+
+    # Middle
+    res_block1, attn_block, res_block2 = self.middle_blocks
+    h = res_block1(h)
+    h = attn_block(h)
+    h = res_block2(h)
+
+    hs_shapes = util.tree_shapes(hs)
+
+    # Upsampling
+    block_iter = iter(self.up_blocks)
+    for i, (dim_in, dim_out) in enumerate(self.in_out[::-1]):
+
+      # Upsample
+      h = next(block_iter)(h)
+
+      # Resnet block
+      h = jnp.concatenate([h, hs.pop()], axis=-1)
+      h = next(block_iter)(h, time_emb)
+
+      # Resnet block
+      h = jnp.concatenate([h, hs.pop()], axis=-1)
+      h = next(block_iter)(h, time_emb)
+
+      # Attention block
+      h = next(block_iter)(h)
+
+    # Final
+    h_in = hs.pop()
+    h = jnp.concatenate([h, h_in], axis=-1)
+    h = self.final_block(h, time_emb)
+
+    assert len(hs) == 0
+
+    return h
+
+
+################################################################################################################
+
+if __name__ == '__main__':
+  from debug import *
+  import matplotlib.pyplot as plt
+  from generax.flows.base import Sequential
+
+  key = random.PRNGKey(0)
+  x, y = random.normal(key, shape=(2, 10, 16, 16, 3))
+  cond_shape = y.shape[1:]
+  y, cond_shape = None, None
+
+  layer = TimeDependentUNet(input_shape=x.shape[1:],
+                            dim_mults=(1, 2, 4),
+                            key=key)
+
+  t = random.uniform(key, shape=x.shape[:1])
+  layer(util.unbatch(t), util.unbatch(x))
+
+  out = eqx.filter_vmap(layer)(t, x)
+
+  import pdb; pdb.set_trace()
+

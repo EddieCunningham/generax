@@ -7,6 +7,7 @@ from jaxtyping import Array, PRNGKeyArray
 from generax.trainer import Trainer
 import generax.util.misc as misc
 import matplotlib.pyplot as plt
+import generax.util as util
 import equinox as eqx
 
 def get_dataset_iter():
@@ -89,6 +90,8 @@ if __name__ == '__main__':
 
       # Compute the loss
       return jnp.sum((ut - vt)**2)
+
+    unbatched_loss(util.unbatch(data), key)
 
     keys = random.split(key, data['x'].shape[0])
     objective = jax.vmap(unbatched_loss)(data, keys).mean()
