@@ -1,5 +1,5 @@
 # generax
-generax provides implementations of different kinds of generative models.  The library is built on top of [Equinox](https://github.com/patrick-kidger/equinox) which removes the need to worry about keeping track of model parameters.  For example, the following code snippet shows how to create a neural spline flow and sample from it.
+generax provides implementations of flow based generative models.  The library is built on top of [Equinox](https://github.com/patrick-kidger/equinox) which removes the need to worry about keeping track of model parameters.
 ```python
 key = random.PRNGKey(0) # JAX random key
 x = ... # some data
@@ -16,12 +16,17 @@ model = NeuralSpline(input_shape=x.shape[1:],
 # Data dependent initialization
 model = model.data_dependent_init(x, key=key)
 
-# Sample from the model
-samples = model.sample(key, n_samples=1000)
+# Take multiple samples using vmap
+keys = random.split(key, 1000)
+samples = eqx.filter_vmap(model.sample)(keys)
 
 # Compute the log probability of data
-log_prob = model.log_prob(x)
+log_prob = eqx.filter_vmap(model.log_prob)(x)
 ```
+
+There is also support for probability paths (time-dependent probability distributions) which can be used to train continuous normalizing flows with flow matching.  See the examples on flow matching and multi-sample flow matching for more details.
+
+![Samples](notebooks/ppath.png)
 
 # Installation
 generax is available on pip:
@@ -29,25 +34,13 @@ generax is available on pip:
 pip install generax
 ```
 
-# Roadmap
-### Implemented
-- Normalizing flows
-- Continuous normalizing flows
-- Diffusion models
-
-And these models can be trained using a variety of methods including:
-- Maximum likelihood
-- Score matching
-- Flow matching
-- Variational inference
-
 # Training
 Generax provides an easy interface to train these models:
 ```python
-trainer = Trainer(checkpoint_path='tmp/RealNVP')
+trainer = Trainer(checkpoint_path='tmp/model_path')
 
 model = trainer.train(model=model,              # Generax model
-                      objective=max_likelihood, # Objective function
+                      objective=my_objective,   # Objective function
                       evaluate_model=tester,    # Testing function
                       optimizer=optimizer,      # Optax optimizer
                       num_steps=10000,          # Number of training steps
@@ -57,4 +50,4 @@ model = trainer.train(model=model,              # Generax model
                       test_every=1000,          # Test interval
                       retrain=True)             # Retrain from checkpoint
 ```
-See the tutorial for an example.
+See the examples folder for more details.

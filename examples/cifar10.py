@@ -46,6 +46,7 @@ if __name__ == '__main__':
   from generax.distributions.flow_models import *
   from generax.distributions.base import *
   from generax.nn import *
+  from generax.distributions.coupling import OTTCoupling
 
   train_ds = get_dataset_iter()
   data = next(train_ds)
@@ -75,28 +76,29 @@ if __name__ == '__main__':
 
   # Construct the loss function
   def loss(flow, data, key):
+    k1, k2 = random.split(key, 2)
 
-    def unbatched_loss(data, key):
-      k1, k2 = random.split(key, 2)
+    # Sample
+    x1 = data['x']
+    keys = random.split(k1, x1.shape[0])
+    x0 = eqx.filter_vmap(cond_ppath.prior.sample)(keys)
+    t = random.uniform(k2, shape=(x1.shape[0],))
 
-      # Sample
-      x1 = data['x']
-      x0 = cond_ppath.prior.sample(k1)
-      t = random.uniform(k2)
+    # Resample from the coupling
+    coupling = OTTCoupling(x0, x1)
+    x0 = coupling.sample_x0_given_x1(k1)
 
-      # Compute f_t(x_0; x_1)
-      def ft(t):
-        return cond_ppath.to_data_space(t, x0, x1)
-      xt, ut = jax.jvp(ft, (t,), (jnp.ones_like(t),))
+    # Compute f_t(x_0; x_1)
+    def ft(t):
+      return eqx.filter_vmap(cond_ppath.to_data_space)(t, x0, x1)
+    xt, ut = jax.jvp(ft, (t,), (jnp.ones_like(t),))
 
-      # Compute the parametric vector field
-      vt = flow.net(t, xt)
+    # Compute the parametric vector field
+    vt = eqx.filter_vmap(flow.net)(t, xt)
 
-      # Compute the loss
-      return jnp.sum((ut - vt)**2)
+    # Compute the loss
+    objective = jnp.sum((ut - vt)**2).mean()
 
-    keys = random.split(key, data['x'].shape[0])
-    objective = jax.vmap(unbatched_loss)(data, keys).mean()
     aux = dict(objective=objective)
     return objective, aux
 
