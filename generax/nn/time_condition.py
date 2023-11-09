@@ -7,7 +7,8 @@ import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 
-__all__ = ['TimeFeatures']
+__all__ = ['GaussianFourierProjection',
+           'TimeFeatures']
 
 ################################################################################################################
 

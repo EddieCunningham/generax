@@ -73,10 +73,10 @@ def jvp(primals, tangents):
 
 class LogisticCDFMixtureLogit(BijectiveTransform):
   """Used in Flow++ https://arxiv.org/pdf/1902.00275.pdf
+  This is a logistic CDF mixture model followed by a logit.
 
   **Attributes**:
-  - `s_unbounded`: The unbounded scaling parameter.
-  - `b`: The shift parameter.
+  - `theta`: The parameters of the transformation.
   """
 
   theta: Array

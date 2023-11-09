@@ -62,7 +62,7 @@ if __name__ == '__main__':
   # The target probability path is the expectation of cond_ppath
   # with the expectation taken over the dataset.
   cond_ppath = TimeDependentNormalizingFlow(transform=ConditionalOptionalTransport(input_shape=x_shape, key=key),
-                                            prior=Gaussian(data_shape=x_shape))
+                                            prior=Gaussian(input_shape=x_shape))
 
   # Construct the loss function
   def loss(net, data, key):

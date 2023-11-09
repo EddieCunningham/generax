@@ -14,11 +14,11 @@ __all__ = ['ProbabilityDistribution',
            'Gaussian']
 
 class ProbabilityDistribution(eqx.Module, ABC):
-  """An object that we can sample from and use to evaluate log probabilities.
+  """An object that we can sample from and use to evaluate log probabilities.  This is an abstract base class.
 
   **Atributes**:
 
-  - `data_shape`: The dimension of the sampling space.
+  - `input_shape`: The shape of samples.
 
   **Methods**:
 
@@ -27,19 +27,19 @@ class ProbabilityDistribution(eqx.Module, ABC):
   - `log_prob(x) -> log_px`: Compute the log probability of a point under the model
   """
 
-  data_shape: int = eqx.field(static=True)
+  input_shape: int = eqx.field(static=True)
 
   def __init__(self,
                *,
-               data_shape: Union[int, Tuple[int]],
+               input_shape: Union[int, Tuple[int]],
                **kwargs):
     """**Arguments**:
 
-    - `data_shape`: The dimension of the space.  This can be either
+    - `input_shape`: The dimension of the space.  This can be either
             an integer or a tuple of integers to represent images
     """
-    assert isinstance(data_shape, tuple) or isinstance(data_shape, list)
-    self.data_shape = data_shape
+    assert isinstance(input_shape, tuple) or isinstance(input_shape, list)
+    self.input_shape = input_shape
 
   @abstractmethod
   def sample_and_log_prob(self,
@@ -50,21 +50,31 @@ class ProbabilityDistribution(eqx.Module, ABC):
 
     **Returns**:
     A single sample from the model with its log probability.
+
+    Use eqx.filter_vmap to get more samples!  For example,
+    ```python
+    keys = random.split(key, n_samples)
+    x, log_px = eqx.filter_vmap(self.sample_and_log_prob)(keys)
+    ```
     """
     pass
 
   def sample(self,
              key: PRNGKeyArray,
              y: Optional[Array] = None) -> Array:
-    """**Arguments**:
-    Use eqx.filter_vmap to get more samples!  For example,
-    keys = random.split(key, n_samples)
-    samples = eqx.filter_vmap(self.sample)(keys)
+    """
+    **Arguments**:
 
     - `key`: The random number generator key.
 
     **Returns**:
     Samples from the model
+
+    Use eqx.filter_vmap to get more samples!  For example,
+    ```python
+    keys = random.split(key, n_samples)
+    samples = eqx.filter_vmap(self.sample)(keys)
+    ```
     """
     return self.sample_and_log_prob(key, y)[0]
 
@@ -76,7 +86,7 @@ class ProbabilityDistribution(eqx.Module, ABC):
     """**Arguments**:
 
     - `x`: The point we want to compute logp(x) at.
-    - `y`: The conditioning information.
+    - `y`: The (optional) conditioning information.
     - `key`: The random number generator key.  Can be passed in the event
              that we're getting a stochastic estimate of the log prob.
 
@@ -92,7 +102,7 @@ class ProbabilityDistribution(eqx.Module, ABC):
     """**Arguments**:
 
     - `x`: The point we want to compute grad logp(x) at.
-    - `y`: The conditioning information.
+    - `y`: The (optional) conditioning information.
     - `key`: The random number generator key.  Can be passed in the event
              that we're getting a stochastic estimate of the log prob.
 
@@ -108,7 +118,7 @@ class ProbabilityPath(ProbabilityDistribution):
 
   **Atributes**:
 
-  - `data_shape`: The dimension of the sampling space.
+  - `input_shape`: The dimension of the sampling space.
 
   **Methods**:
 
@@ -117,19 +127,19 @@ class ProbabilityPath(ProbabilityDistribution):
   - `log_prob(x) -> log_px`: Compute the log probability of a point under the model
   """
 
-  data_shape: int = eqx.field(static=True)
+  input_shape: int = eqx.field(static=True)
 
   def __init__(self,
                *,
-               data_shape: Union[int, Tuple[int]],
+               input_shape: Union[int, Tuple[int]],
                **kwargs):
     """**Arguments**:
 
-    - `data_shape`: The dimension of the space.  This can be either
+    - `input_shape`: The dimension of the space.  This can be either
             an integer or a tuple of integers to represent images
     """
-    assert isinstance(data_shape, tuple) or isinstance(data_shape, list)
-    self.data_shape = data_shape
+    assert isinstance(input_shape, tuple) or isinstance(input_shape, list)
+    self.input_shape = input_shape
 
   @abstractmethod
   def sample_and_log_prob(self,
@@ -155,7 +165,7 @@ class ProbabilityPath(ProbabilityDistribution):
 
     - `t`: The time at which we want to sample.
     - `xt`: The point we want to compute logp(x) at.
-    - `y`: The conditioning information.
+    - `y`: The (optional) conditioning information.
     - `key`: The random number generator key.  Can be passed in the event
              that we're getting a stochastic estimate of the log prob.
 
@@ -193,7 +203,7 @@ class ProbabilityPath(ProbabilityDistribution):
     """**Arguments**:
 
     - `x`: The point we want to compute grad logp(x) at.
-    - `y`: The conditioning information.
+    - `y`: The (optional) conditioning information.
     - `key`: The random number generator key.  Can be passed in the event
              that we're getting a stochastic estimate of the log prob.
 
@@ -216,12 +226,31 @@ class ProbabilityPath(ProbabilityDistribution):
 
     - `t`: Time.
     - `x0`: A point in the base space.
-    - `y`: The conditioning information.
+    - `y`: The (optional) conditioning information.
 
     **Returns**:
     (xt, dxt/dt)
     """
     pass
+
+    @abstractmethod
+    def vector_field(self,
+                     t: Array,
+                     xt: Array,
+                     y: Optional[Array] = None,
+                     **kwargs) -> Array:
+      """The vector field that samples evolve on as t changes
+
+      **Arguments**:
+
+      - `t`: Time.
+      - `xt`: A point in the base space.
+      - `y`: The (optional) conditioning information.
+
+      **Returns**:
+      dxt/dt
+      """
+      pass
 
 ################################################################################################################
 
@@ -238,7 +267,7 @@ class Gaussian(ProbabilityDistribution):
     **Returns**:
     A single sample from the model.  Use eqx.filter_vmap to get more samples.
     """
-    return random.normal(key, shape=self.data_shape)
+    return random.normal(key, shape=self.input_shape)
 
   def log_prob(self,
                x: Array) -> Array:

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from generax.nn.layers import *
 
 __all__ = ['GatedResBlock',
+           'Block',
            'ImageResBlock']
 
 ################################################################################################################

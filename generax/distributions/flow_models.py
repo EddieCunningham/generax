@@ -21,7 +21,7 @@ __all__ = ['NormalizingFlow',
 
 class NormalizingFlow(ProbabilityDistribution, ABC):
   """A normalizing flow is a model that we use to represent probability
-  distributions https://arxiv.org/pdf/1912.02762.pdf
+  distributions.  See [this](https://arxiv.org/pdf/1912.02762.pdf) for an overview.
 
   **Atributes**:
 
@@ -52,8 +52,8 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
     """
     self.transform = transform
     self.prior = prior
-    data_shape = self.transform.input_shape
-    super().__init__(data_shape=data_shape, **kwargs)
+    input_shape = self.transform.input_shape
+    super().__init__(input_shape=input_shape, **kwargs)
 
   def to_base_space(self,
                     x: Array,
@@ -120,7 +120,8 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
                           x: Array,
                           y: Optional[Array] = None,
                           key: PRNGKeyArray = None) -> BijectiveTransform:
-    """Initialize the parameters of the layer based on the data.
+    """Initialize the parameters of the layer based on a batch of data.
+    This is one of the few times that $x$ is expected to be batched.
 
     **Arguments**:
 
@@ -168,7 +169,7 @@ class RealNVP(NormalizingFlow):
                                  n_blocks=n_blocks,
                                  cond_shape=cond_shape,
                                  key=key)
-    prior = Gaussian(data_shape=input_shape)
+    prior = Gaussian(input_shape=input_shape)
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
@@ -205,7 +206,7 @@ class NeuralSpline(NormalizingFlow):
                                  n_spline_knots=n_spline_knots,
                                  cond_shape=cond_shape,
                                  key=key)
-    prior = Gaussian(data_shape=input_shape)
+    prior = Gaussian(input_shape=input_shape)
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
@@ -213,7 +214,7 @@ class NeuralSpline(NormalizingFlow):
 ################################################################################################################
 
 class ContinuousNormalizingFlow(NormalizingFlow):
-  """FFJORD https://arxiv.org/pdf/1810.01367.pdf
+  """This is [FFJORD](https://arxiv.org/pdf/1810.01367.pdf).
   """
   def __init__(self,
                input_shape: Tuple[int],
@@ -233,6 +234,10 @@ class ContinuousNormalizingFlow(NormalizingFlow):
               network will be used.  `net` should accept `net(t, x, y=y)`
     - `cond_shape`: The shape of the conditioning information.
     - `key`: A `jax.random.PRNGKey` for initialization
+    - `controller_rtol`: The relative tolerance for the controller.
+    - `controller_atol`: The absolute tolerance for the controller.
+    - `trace_estimate_likelihood`: Whether or not to use trace estimation for the likelihood.
+    - `adjoint`: The adjoint method to use.  See [this](https://docs.kidger.site/diffrax/api/adjoints/)
     """
     transform = FFJORDTransform(input_shape=input_shape,
                                 net=net,
@@ -243,17 +248,20 @@ class ContinuousNormalizingFlow(NormalizingFlow):
                                 trace_estimate_likelihood=trace_estimate_likelihood,
                                 adjoint=adjoint,
                                 **kwargs)
-    prior = Gaussian(data_shape=input_shape)
+    prior = Gaussian(input_shape=input_shape)
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
 
   @property
   def vector_field(self):
+    """Get the vector field function that samples evolve on as t changes.  This is
+    an `eqx.Module` that with the signature `vector_field(t, x, y=y) -> dx/dt`."""
     return self.transform.vector_field
 
   @property
   def net(self):
+    """Same as `vector_field`"""
     return self.vector_field
 
   def sample(self,
@@ -307,8 +315,8 @@ class TimeDependentNormalizingFlow(ProbabilityPath, ABC):
     """
     self.transform = transform
     self.prior = prior
-    data_shape = self.transform.input_shape
-    super().__init__(data_shape=data_shape, **kwargs)
+    input_shape = self.transform.input_shape
+    super().__init__(input_shape=input_shape, **kwargs)
 
   def to_base_space(self,
                     t: Array,

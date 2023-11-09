@@ -26,15 +26,6 @@ class BijectiveTransform(eqx.Module, ABC):
                   as the input.
   - `cond_shape`: The shape of the conditioning information.  If there is no
                   conditioning information, this is None.
-
-  **Methods**:
-
-  - `__call__(x,y,inverse) -> (z,log_det)`: Apply the transformation to the input.
-    - `x`: Input array of shape `input_shape`
-    - `y`: Conditioning information of shape `cond_shape`
-    - `inverse`: Whether to invert the transformation
-    - `z`: The transformed input
-    - `log_det`: The log determinant of the Jacobian
   """
 
   input_shape: Tuple[int] = eqx.field(static=True)
@@ -121,15 +112,6 @@ class TimeDependentBijectiveTransform(BijectiveTransform):
                   as the input.
   - `cond_shape`: The shape of the conditioning information.  If there is no
                   conditioning information, this is None.
-
-  **Methods**:
-
-  - `__call__(x,y,inverse) -> (z,log_det)`: Apply the transformation to the input.
-    - `x`: Input array of shape `input_shape`
-    - `y`: Conditioning information of shape `cond_shape`
-    - `inverse`: Whether to invert the transformation
-    - `z`: The transformed input
-    - `log_det`: The log determinant of the Jacobian
   """
 
   def data_dependent_init(self,
@@ -186,6 +168,24 @@ class TimeDependentBijectiveTransform(BijectiveTransform):
     """
     return self(t, x0, y=y, inverse=True, **kwargs)
 
+  def vector_field(self,
+                   t: Array,
+                   xt: Array,
+                   y: Optional[Array] = None,
+                   **kwargs) -> Array:
+    """The vector field that samples evolve on as t changes
+
+    **Arguments**:
+
+    - `t`: Time.
+    - `x0`: A point in the base space.
+    - `y`: The conditioning information.
+
+    **Returns**:
+    The vector field that samples evolve on at (t, x).
+    """
+    raise NotImplementedError
+
 ################################################################################################################
 
 class Sequential(BijectiveTransform):
@@ -194,18 +194,9 @@ class Sequential(BijectiveTransform):
 
   ```python
   # Intented usage:
-  composition = Sequential(LayerInit1,
-                           LayerInit2,
-                           x=x,
-                           key=key)
-  z = composition(x)
-
-  # Equicalent to the following:
-  layer1 = LayerInit1(**init_kwargs)
-  u = layer1(x)
-  **init_kwargs = dict(input_shape=input_shape, x=u, key=key)
-  layer2 = LayerInit2(**init_kwargs)
-  z = layer2(u)
+  layer1 = MyTransform(...)
+  layer2 = MyTransform(...)
+  transform = Sequential(layer1, layer2)
   ```
 
   **Attributes**:
@@ -268,7 +259,6 @@ class Sequential(BijectiveTransform):
     updated_layer = eqx.tree_at(get_layers, self, new_layers)
     return updated_layer
 
-  @jax.named_scope("generx.flows.Sequential")
   def __call__(self,
                x: Array,
                y: Optional[Array] = None,

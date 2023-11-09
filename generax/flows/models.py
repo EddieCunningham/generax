@@ -8,7 +8,8 @@ import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 from generax.flows.base import BijectiveTransform, Sequential
 
-__all__ = ['RealNVPTransform',
+__all__ = ['GeneralTransform',
+           'RealNVPTransform',
            'NeuralSplineTransform']
 
 ################################################################################################################

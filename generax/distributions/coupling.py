@@ -6,6 +6,7 @@ from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
 import einops
 import equinox as eqx
 from abc import ABC, abstractmethod
+from jaxtyping import Array, PRNGKeyArray
 
 __all__ = ['Coupling',
            'UniformCoupling',
@@ -13,18 +14,22 @@ __all__ = ['Coupling',
 
 class Coupling(eqx.Module, ABC):
   """Given two batches of samples from two distributions, this
-  will compute a discrete distribution q(x_0,x_1) = pi(i,j)delta(x_0 - x_0^i)delta(x_1 - x_1^j))"""
-  batch_size: int
-  x0: jax.Array
-  x1: jax.Array
-  logits: jax.Array
+  will compute a discrete distribution as done in [multisample flow matching](https://arxiv.org/pdf/2304.14772.pdf)
 
-  def __init__(self, x0: jax.Array, x1: jax.Array):
+  $$q(x_0,x_1) = \sum_{i,j}\pi_{i,j}\delta(x_0 - x_0^i)\delta(x_1 - x_1^j))$$
+
+  """
+  batch_size: int
+  x0: Array
+  x1: Array
+  logits: Array
+
+  def __init__(self, x0: Array, x1: Array):
     """Initialize the coupling
 
-    Args:
-      x0: A batch of samples from p(x_0)
-      x1: A batch of samples from p(x_1)
+    **Arguments**:
+      - x0: A batch of samples from p(x_0)
+      - x1: A batch of samples from p(x_1)
     """
     self.batch_size = x0.shape[0]
     self.x0 = x0
@@ -34,15 +39,16 @@ class Coupling(eqx.Module, ABC):
 
   @abstractmethod
   def compute_logits(self):
+    """Compute $\log \pi_{i,j}$"""
     pass
 
-  def sample_x0_given_x1(self, rng_key: random.PRNGKey) -> jax.Array:
+  def sample_x0_given_x1(self, rng_key: PRNGKeyArray) -> Array:
     """Resample from the coupling
 
-    Args:
-      rng_key: The random number generator key
+    **Arguments**:
+      - rng_key: The random number generator key
 
-    Returns:
+    **Returns**:
       A sample from q(x_0|x_1)
     """
     idx = jax.random.categorical(rng_key, self.logits, axis=0)
@@ -51,11 +57,11 @@ class Coupling(eqx.Module, ABC):
 class UniformCoupling(Coupling):
   """This is a uniform coupling between two distributions"""
 
-  def compute_logits(self) -> jax.Array:
+  def compute_logits(self) -> Array:
     """Compute the logits for the coupling"""
     return jnp.ones((self.batch_size, self.batch_size))/self.batch_size
 
-  def sample_x0_given_x1(self, rng_key: random.PRNGKey) -> jax.Array:
+  def sample_x0_given_x1(self, rng_key: PRNGKeyArray) -> Array:
     return self.x0
 
 
@@ -66,8 +72,11 @@ from ott.problems.linear import linear_problem
 from ott.solvers.linear import sinkhorn
 
 class OTTCoupling(Coupling):
+  """Optimal transport coupling using the [ott library](https://ott-jax.readthedocs.io/en/latest/).
+  This class uses the sinkhorn solver to compute the optimal transport coupling.
 
-  def compute_logits(self) -> jax.Array:
+  """
+  def compute_logits(self) -> Array:
     """Solve for the optimal transport couplings"""
 
     # Create a point cloud object

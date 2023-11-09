@@ -480,6 +480,29 @@ class ConditionalOptionalTransport(TimeDependentBijectiveTransform):
       log_det = -jnp.log(1 - t)
       return x0, log_det
 
+  def vector_field(self,
+                   t: Array,
+                   xt: Array,
+                   y: Optional[Array] = None,
+                   **kwargs) -> Array:
+    """The vector field that samples evolve on as t changes
+
+    **Arguments**:
+
+    - `t`: Time.
+    - `x0`: A point in the base space.
+    - `y`: The conditioning information.
+
+    **Returns**:
+    The vector field that samples evolve on at (t, x).
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+    if y is None:
+      raise ValueError(f'Expected a conditional input')
+    if y.shape != x.shape:
+      raise ValueError(f'Expected y.shape ({y.shape}) to match x.shape ({x.shape})')
+    return y - x
+
 ################################################################################################################
 
 if __name__ == '__main__':

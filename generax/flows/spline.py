@@ -155,8 +155,7 @@ class RationalQuadraticSpline(BijectiveTransform):
 
 
   **Attributes**:
-  - `s_unbounded`: The unbounded scaling parameter.
-  - `b`: The shift parameter.
+  - `theta`: The parameters of the spline.
   """
 
   theta: Array
