@@ -64,11 +64,17 @@ class Trainer(eqx.Module):
   """
 
   checkpointer: Checkpointer
+  _aux_history: list
 
   def __init__(self,
                checkpoint_path: str):
 
     self.checkpointer = Checkpointer(checkpoint_path)
+    self._aux_history = []
+
+  @property
+  def aux_history(self):
+    return jax.tree_util.tree_map(lambda *xs: jnp.array(xs), *self._aux_history)
 
   def train_step(self,
                  objective: Callable,
@@ -103,7 +109,8 @@ class Trainer(eqx.Module):
             double_batch: int = -1,
             checkpoint_every: int = 1000,
             test_every: int = 1000,
-            retrain: bool = False):
+            retrain: bool = False,
+            just_load: bool = False):
     """Train the model.  This will load the model if the most
     recent checkpoint exists has completed training.
 
@@ -121,6 +128,7 @@ class Trainer(eqx.Module):
     - `checkpoint_every`: How often to checkpoint the model
     - `test_every`: How often to evaluate the model
     - `retrain`: Whether to force retraining from scratch
+    - `just_load`: Whether to just load the most recent checkpoint and return
     """
     key0 = random.PRNGKey(0)
 
@@ -131,6 +139,9 @@ class Trainer(eqx.Module):
     # Load the most recent checkpoint
     if retrain == False:
       train_state = self.restore(train_state)
+
+    if just_load:
+      return train_state.model
 
     # Fill in the training step with the objective and optimizer
     train_step = eqx.Partial(self.train_step, objective, optimizer)
@@ -174,6 +185,7 @@ class Trainer(eqx.Module):
         params, aux = scan_step(params, data)
         train_state = eqx.combine(params, static)
         pbar.update(double_batch)
+      self._aux_history.append(aux)
 
       # Update the progress bar
       loss = aux['objective'].mean()

@@ -46,6 +46,8 @@ class TimeDependentUNet(eqx.Module):
   final_block: ImageResBlock
   proj_out: WeightNormConv
 
+  freeu: bool = eqx.field(static=True)
+
   def __init__(self,
                input_shape: Tuple[int],
                dim: int = 16,
@@ -54,14 +56,16 @@ class TimeDependentUNet(eqx.Module):
                attn_heads: int = 4,
                attn_dim_head: int = 32,
                *,
-               key: PRNGKeyArray):
+               key: PRNGKeyArray,
+               freeu: bool = False):
 
     H, W, C = input_shape
-    if H//(2**dim_mults[-1]) == 0:
+    if H//(2**len(dim_mults)) == 0:
       raise ValueError(f"Image size {(H, W)} is too small for {len(dim_mults)} downsamples.")
     self.input_shape = input_shape
     self.dim = dim
     self.dim_mults = dim_mults
+    self.freeu = freeu
 
     keys = random.split(key, 20)
     key_iter = iter(keys)
@@ -94,7 +98,7 @@ class TimeDependentUNet(eqx.Module):
 
     # Downsampling
     down_blocks = []
-    dims = [self.dim] + [self.dim*mult for mult in self.dim_mults]
+    dims = [self.dim*mult for mult in self.dim_mults]
     self.in_out = list(zip(dims[:-1], dims[1:]))
     keys = random.split(next(key_iter), len(self.in_out))
     for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out)):
@@ -107,6 +111,8 @@ class TimeDependentUNet(eqx.Module):
                         out_size=dim_out,
                         key=key)
       down_blocks.append(down)
+      assert H%2 == 0
+      assert W%2 == 0
       H, W = H//2, W//2
     self.down_blocks = down_blocks
 
@@ -120,7 +126,6 @@ class TimeDependentUNet(eqx.Module):
     # Upsampling
     keys = random.split(next(key_iter), len(self.in_out))
     up_blocks = []
-    last_dim = dim_out
     for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out[::-1])):
       k1, k2 = random.split(key, 2)
 
@@ -189,8 +194,21 @@ class TimeDependentUNet(eqx.Module):
       # Upsample
       h = next(block_iter)(h)
 
+      hs_ = hs.pop()
+      if self.freeu:
+        if i == 0:
+          h_mean = h.mean(axis=-1)[:,:,None]
+          h_max = h_mean.max()
+          h_min = h_mean.max()
+          h_mean = (h_mean - h_min[None, None])/(h_max - h_min)[None, None]
+
+          b1 = 1.5
+          s1 = 0.9
+          h = h.at[:,:640].mul((b1 - 1 ) * h_mean + 1)
+          hs_ = freeu_filter(hs_, threshold=1.0, scale=s1)
+
       # Resnet block
-      h = jnp.concatenate([h, hs.pop()], axis=-1)
+      h = jnp.concatenate([h, hs_], axis=-1)
       h = next(block_iter)(h, time_emb)
 
       # Resnet block
@@ -219,7 +237,8 @@ if __name__ == '__main__':
   from generax.flows.base import Sequential
 
   key = random.PRNGKey(0)
-  x, y = random.normal(key, shape=(2, 10, 16, 16, 3))
+  dtype = jnp.bfloat16
+  x, y = random.normal(key, shape=(2, 10, 16, 16, 3), dtype=dtype)
   cond_shape = y.shape[1:]
   y, cond_shape = None, None
 
@@ -227,7 +246,12 @@ if __name__ == '__main__':
                             dim_mults=(1, 2, 4),
                             key=key)
 
-  t = random.uniform(key, shape=x.shape[:1])
+  params, static = eqx.partition(layer, eqx.is_inexact_array)
+  params = jax.tree_util.tree_map(lambda x: x.astype(dtype), params)
+  layer = eqx.combine(params, static)
+
+
+  t = random.uniform(key, shape=x.shape[:1], dtype=dtype)
   layer(util.unbatch(t), util.unbatch(x))
 
   out = eqx.filter_vmap(layer)(t, x)

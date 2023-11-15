@@ -94,7 +94,7 @@ class NeuralODE(eqx.Module):
 
       if inverse == False:
         # If we're inverting the flow, we need to adjust the time
-        t = 1.0 - t
+        t = t1 - t
 
       # Recombine the model
       model = eqx.combine(params, static)

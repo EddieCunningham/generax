@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 def get_dataset_iter(dtype=jnp.bfloat16):
 
-  training_data = datasets.CIFAR10(
+  training_data = datasets.MNIST(
       root="data",
       train=True,
       download=True,
@@ -26,7 +26,7 @@ def get_dataset_iter(dtype=jnp.bfloat16):
   )
 
   random_sampler = RandomSampler(training_data, replacement=True)
-  train_dataloader = DataLoader(training_data, batch_size=256, sampler=random_sampler, drop_last=True)
+  train_dataloader = DataLoader(training_data, batch_size=512, sampler=random_sampler, drop_last=True)
 
   def get_train_ds() -> Iterator[Mapping[str, Array]]:
     train_iter = iter(train_dataloader)
@@ -58,8 +58,8 @@ if __name__ == '__main__':
 
   # Construct the neural network that learn the score
   net = TimeDependentUNet(input_shape=x_shape,
-                          dim=256,
-                          dim_mults=[1, 2, 4, 8],
+                          dim=128,
+                          dim_mults=[1, 2, 4],
                           resnet_block_groups=8,
                           attn_heads=4,
                           attn_dim_head=32,
@@ -134,7 +134,7 @@ if __name__ == '__main__':
   optimizer = optax.chain(*chain)
 
   # Create the trainer and optimize
-  trainer = Trainer(checkpoint_path='tmp/cifar10/')
+  trainer = Trainer(checkpoint_path='tmp/mnist')
   flow = trainer.train(model=flow,
                       objective=loss,
                       evaluate_model=lambda x: x,
@@ -161,5 +161,5 @@ if __name__ == '__main__':
     ax.set_axis_off()
 
   # Save the plot
-  plt.savefig('tmp/cifar10/samples.png')
+  plt.savefig('tmp/mnist/samples.png')
   # import pdb; pdb.set_trace()

@@ -13,20 +13,27 @@ import equinox as eqx
 import torch
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 from torchvision import datasets
-from torchvision.transforms import ToTensor
+import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
+
 
 def get_dataset_iter(dtype=jnp.bfloat16):
 
-  training_data = datasets.CIFAR10(
-      root="data",
-      train=True,
+  training_data = datasets.CelebA(
+      root='data',
+      split='train',
+      target_type='attr',
       download=True,
-      transform=ToTensor()
+      transform=transforms.Compose([
+            transforms.CenterCrop(148),
+            transforms.Resize(64),
+            transforms.ToTensor(),
+      ])
   )
 
   random_sampler = RandomSampler(training_data, replacement=True)
-  train_dataloader = DataLoader(training_data, batch_size=256, sampler=random_sampler, drop_last=True)
+  train_dataloader = DataLoader(
+      training_data, batch_size=128, sampler=random_sampler, drop_last=True)
 
   def get_train_ds() -> Iterator[Mapping[str, Array]]:
     train_iter = iter(train_dataloader)
@@ -38,6 +45,7 @@ def get_dataset_iter(dtype=jnp.bfloat16):
 
   train_ds = get_train_ds()
   return train_ds
+
 
 if __name__ == '__main__':
   from debug import *
@@ -58,8 +66,8 @@ if __name__ == '__main__':
 
   # Construct the neural network that learn the score
   net = TimeDependentUNet(input_shape=x_shape,
-                          dim=256,
-                          dim_mults=[1, 2, 4, 8],
+                          dim=128,
+                          dim_mults=[1, 2, 4, 4],
                           resnet_block_groups=8,
                           attn_heads=4,
                           attn_dim_head=32,
@@ -77,7 +85,8 @@ if __name__ == '__main__':
 
   # Count the number of parameters in the flow
   params, _ = eqx.partition(flow, eqx.is_inexact_array)
-  num_params = sum(jax.tree_map(lambda x: util.list_prod(x.shape), jax.tree_util.tree_leaves(params)))
+  num_params = sum(jax.tree_map(lambda x: util.list_prod(
+      x.shape), jax.tree_util.tree_leaves(params)))
 
   # Build the probability path that we'll use for learning.
   # The target probability path is the expectation of cond_ppath
@@ -117,16 +126,21 @@ if __name__ == '__main__':
     aux = dict(objective=objective)
     return objective, aux
 
+  # Run a double batch of data through the loss function to make
+  # sure that we won't run out of memory
+  # data = misc.extract_multiple_batches_from_iterator(train_ds, 2)
+  # data = jax.tree_map(lambda x: x.reshape((-1, *x.shape[2:])), data)
+  # eqx.filter_jit(loss)(flow, data, key)
   print(f'Number of parameters: {num_params}')
 
   # Create the optimizer
   import optax
   schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
-                                    peak_value=1.0,
-                                    warmup_steps=1000,
-                                    decay_steps=3e5,
-                                    end_value=0.1,
-                                    exponent=1.0)
+                                                peak_value=1.0,
+                                                warmup_steps=1000,
+                                                decay_steps=3e5,
+                                                end_value=0.1,
+                                                exponent=1.0)
   chain = []
   chain.append(optax.clip_by_global_norm(15.0))
   chain.append(optax.adamw(3e-4))
@@ -134,18 +148,19 @@ if __name__ == '__main__':
   optimizer = optax.chain(*chain)
 
   # Create the trainer and optimize
-  trainer = Trainer(checkpoint_path='tmp/cifar10/')
+  trainer = Trainer(checkpoint_path='tmp/celeba/')
   flow = trainer.train(model=flow,
-                      objective=loss,
-                      evaluate_model=lambda x: x,
-                      optimizer=optimizer,
-                      num_steps=int(1e6),
-                      double_batch=100,
-                      data_iterator=train_ds,
-                      checkpoint_every=5000,
-                      test_every=-1,
-                      retrain=False,
-                      just_load=True)
+                       objective=loss,
+                       evaluate_model=lambda x: x,
+                       optimizer=optimizer,
+                       num_steps=int(1e6),
+                       double_batch=100,
+                       data_iterator=train_ds,
+                       checkpoint_every=5000,
+                       test_every=-1,
+                       retrain=False,
+                       just_load=True)
+
 
   # Pull samples from the model
   keys = random.split(key, 64)
@@ -161,5 +176,6 @@ if __name__ == '__main__':
     ax.set_axis_off()
 
   # Save the plot
-  plt.savefig('tmp/cifar10/samples.png')
-  # import pdb; pdb.set_trace()
+  plt.savefig('tmp/celeba/samples.png')
+  # import pdb
+  # pdb.set_trace()

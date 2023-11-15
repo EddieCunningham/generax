@@ -162,3 +162,7 @@ cython_debug/
 .DS_Store
 tmp/
 .vscode/
+
+batch_scripts/
+slurm_out/
+misc/
