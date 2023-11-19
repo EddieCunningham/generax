@@ -24,13 +24,11 @@ class FFJORDTransform(BijectiveTransform):
   - `cond_shape`: The shape of the conditioning information.  If there is no
                   conditioning information, this is None.
   - `neural_ode`: The neural ODE
-  - `trace_estimate_likelihood`: Whether to use a trace estimate for the likelihood.
   - `adjoint`: The adjoint method to use.  Can be one of the following:
   - `key`: The random key to use for initialization
   """
 
   neural_ode: NeuralODE
-  trace_estimate_likelihood: bool
 
   def __init__(self,
                input_shape: Tuple[int],
@@ -44,7 +42,6 @@ class FFJORDTransform(BijectiveTransform):
                *,
                controller_rtol: Optional[float] = 1e-8,
                controller_atol: Optional[float] = 1e-8,
-               trace_estimate_likelihood: Optional[bool] = False,
                adjoint='recursive_checkpoint',
                key: PRNGKeyArray,
                **kwargs):
@@ -78,7 +75,6 @@ class FFJORDTransform(BijectiveTransform):
                                 adjoint=adjoint,
                                 controller_rtol=controller_rtol,
                                 controller_atol=controller_atol)
-    self.trace_estimate_likelihood = trace_estimate_likelihood
 
     super().__init__(input_shape=input_shape,
                      **kwargs)
@@ -92,6 +88,8 @@ class FFJORDTransform(BijectiveTransform):
                y: Optional[Array] = None,
                inverse: bool = False,
                log_likelihood: bool = True,
+               trace_estimate_likelihood: Optional[bool] = False,
+               save_at: Optional[Array] = None,
                key: Optional[PRNGKeyArray] = None,
                **kwargs) -> Array:
     """**Arguments**:
@@ -100,29 +98,29 @@ class FFJORDTransform(BijectiveTransform):
     - `y`: The conditioning information
     - `inverse`: Whether to inverse the transformation
     - `log_likelihood`: Whether to compute the log likelihood of the transformation
+    - `trace_estimate_likelihood`: Whether to compute a trace estimate of the likelihood of the neural ODE.
+    - `save_at`: The times to save the neural ODE at.
     - `key`: The random key to use for initialization
 
     **Returns**:
     `(z, log_det)`
     """
     assert x.shape == self.input_shape, 'Only works on unbatched data'
-    if log_likelihood and (self.trace_estimate_likelihood and (key is None)):
+    if log_likelihood and (trace_estimate_likelihood and (key is None)):
       raise TypeError(f'When using trace estimation, must pass random key')
 
     if log_likelihood == False:
       trace_estimate_likelihood = False
-    else:
-      trace_estimate_likelihood = self.trace_estimate_likelihood
 
-    z, log_det = self.neural_ode(x,
+    solution = self.neural_ode(x,
                                  y=y,
                                  inverse=inverse,
                                  log_likelihood=log_likelihood,
                                  trace_estimate_likelihood=trace_estimate_likelihood,
-                                 save_at=None,
+                                 save_at=save_at,
                                  key=key,
                                  **kwargs)
-    return z, log_det
+    return solution.ys, solution.log_det
 
 ################################################################################################################
 
@@ -130,7 +128,6 @@ if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
-  from generax.nn.resnet import ResNet1d
   from generax.nn.resnet import TimeDependentResNet
   # enable x64
   from jax.config import config

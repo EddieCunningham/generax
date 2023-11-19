@@ -8,8 +8,28 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
+from dataclasses import fields
+from diffrax.solution import Solution
 
 __all__ = ['NeuralODE']
+
+class NeuralODESolution(Solution):
+  """The solution to a neural ODE.  This wraps the diffrax solution
+  class and adds the log determinant of the transformation and some
+  other items from http://proceedings.mlr.press/v119/finlay20a/finlay20a.pdf
+
+  **Attributes**:
+
+  - `log_det`: The log determinant of the transformation.
+  - `total_vf_norm`: The total norm of the vector on the path.
+                     This can help determine how straight the path is.
+  - `total_jac_frob_norm`: The total norm of the jacobian of the vector field.
+                           This
+  """
+
+  log_det: Array
+  total_vf_norm: Array
+  total_jac_frob_norm: Array
 
 class NeuralODE(eqx.Module):
   """Neural ODE"""
@@ -42,8 +62,6 @@ class NeuralODE(eqx.Module):
     elif adjoint == 'direct':
       self.adjoint = diffrax.DirectAdjoint()
     elif adjoint == 'seminorm':
-      assert 0, "There is a tracer leak somewhere "
-      # TODO: Make a bug report
       adjoint_controller = diffrax.PIDController(
           rtol=1e-3, atol=1e-6, norm=diffrax.adjoint_rms_seminorm)
       self.adjoint = diffrax.BacksolveAdjoint(stepsize_controller=adjoint_controller)
@@ -89,8 +107,8 @@ class NeuralODE(eqx.Module):
     # through the ode solver can be faster.
     params, static = eqx.partition(self.vector_field, eqx.is_array)
 
-    def f(t, x_and_logpx, params):
-      x, log_px = x_and_logpx
+    def f(t, carry, params):
+      x, log_det, total_vf_norm, total_jac_frob_norm = carry
 
       if inverse == False:
         # If we're inverting the flow, we need to adjust the time
@@ -108,6 +126,7 @@ class NeuralODE(eqx.Module):
           # Hutchinsons trace estimator.  See ContinuousNormalizingFlow https://arxiv.org/pdf/1810.01367.pdf
           dxdt, dudxv = jax.jvp(apply_vf, (x,), (v,))
           dlogpxdt = -jnp.sum(dudxv*v)
+          dtjfndt = jnp.sum(dudxv**2)
         else:
           # Brute force dlogpx/dt.  See NeuralODE https://arxiv.org/pdf/1806.07366.pdf
           x_flat = x.ravel()
@@ -123,16 +142,24 @@ class NeuralODE(eqx.Module):
           dxdt, d2dx_dtdx_flat = jax.vmap(jvp_flat, in_axes=(None, 0))(x_flat, eye)
           dxdt = dxdt[0]
           dlogpxdt = -jnp.trace(d2dx_dtdx_flat)
+          dtjfndt = jnp.sum(d2dx_dtdx_flat**2)
 
       else:
         # Don't worry about the log likelihood
         dxdt = apply_vf(x)
-        dlogpxdt = jnp.zeros_like(log_px)
+        dlogpxdt = jnp.zeros_like(log_det)
+        dtjfndt = jnp.zeros_like(total_jac_frob_norm)
 
       if inverse == False:
         # If we're inverting the flow, we need to flip the sign of dxdt
         dxdt = -dxdt
-      return dxdt, dlogpxdt
+
+      # Accumulate the norm of the vector field
+      dvfnormdt = jnp.sum(dxdt**2)
+
+      if inverse:
+        dlogpxdt = -dlogpxdt
+      return dxdt, dlogpxdt, dvfnormdt, dtjfndt
 
     term = diffrax.ODETerm(f)
     solver = diffrax.Dopri5()
@@ -143,6 +170,10 @@ class NeuralODE(eqx.Module):
     else:
       saveat = diffrax.SaveAt(ts=save_at)
 
+    log_det = jnp.array(0.0)
+    total_vf_norm = jnp.array(0.0)
+    total_jac_frob_norm = jnp.array(0.0)
+
     # Run the ODE solver
     solution = diffrax.diffeqsolve(term,
                                    solver,
@@ -150,7 +181,10 @@ class NeuralODE(eqx.Module):
                                    t0=t0,
                                    t1=t1,
                                    dt0=0.0001,
-                                   y0=(x, jnp.array(0.0)),
+                                   y0=(x,
+                                       log_det,
+                                       total_vf_norm,
+                                       total_jac_frob_norm),
                                    args=params,
                                    adjoint=self.adjoint,
                                    stepsize_controller=self.stepsize_controller,
@@ -161,9 +195,47 @@ class NeuralODE(eqx.Module):
       # Only take the first time
       outs = jax.tree_util.tree_map(lambda x: x[0], outs)
 
-    z, log_px = outs
+    z, log_det, total_vf_norm, total_jac_frob_norm = outs
 
-    if inverse:
-      log_px = -log_px
+    # Construct the new solution
+    kwargs = {f.name: getattr(solution, f.name)
+              for f in fields(solution)}
+    kwargs['ys'] = z
+    assert z.shape == self.vector_field.input_shape
 
-    return z, log_px
+    new_solution = NeuralODESolution(log_det=log_det,
+                                     total_vf_norm=total_vf_norm,
+                                     total_jac_frob_norm=total_jac_frob_norm,
+                                     **kwargs)
+    return new_solution
+
+################################################################################################################
+
+if __name__ == '__main__':
+  from debug import *
+  import matplotlib.pyplot as plt
+  from generax.flows.base import Sequential
+  from generax.nn.resnet import TimeDependentResNet
+  # enable x64
+  from jax.config import config
+  config.update("jax_enable_x64", True)
+
+
+  key = random.PRNGKey(0)
+  x = random.normal(key, shape=(10, 2))
+  input_shape = x.shape[1:]
+
+  net = TimeDependentResNet(input_shape=input_shape,
+                            working_size=4,
+                            hidden_size=8,
+                            out_size=input_shape[-1],
+                            n_blocks=2,
+                            embedding_size=4,
+                            out_features=8,
+                            key=key)
+
+  node = NeuralODE(vf=net)
+
+  solution = eqx.filter_vmap(node)(x)
+
+  import pdb; pdb.set_trace()

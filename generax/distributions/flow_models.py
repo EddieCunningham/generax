@@ -223,7 +223,6 @@ class ContinuousNormalizingFlow(NormalizingFlow):
                *,
                controller_rtol: Optional[float] = 1e-3,
                controller_atol: Optional[float] = 1e-5,
-               trace_estimate_likelihood: Optional[bool] = False,
                adjoint='recursive_checkpoint',
                key: PRNGKeyArray,
                **kwargs):
@@ -236,7 +235,6 @@ class ContinuousNormalizingFlow(NormalizingFlow):
     - `key`: A `jax.random.PRNGKey` for initialization
     - `controller_rtol`: The relative tolerance for the controller.
     - `controller_atol`: The absolute tolerance for the controller.
-    - `trace_estimate_likelihood`: Whether or not to use trace estimation for the likelihood.
     - `adjoint`: The adjoint method to use.  See [this](https://docs.kidger.site/diffrax/api/adjoints/)
     """
     transform = FFJORDTransform(input_shape=input_shape,
@@ -245,13 +243,16 @@ class ContinuousNormalizingFlow(NormalizingFlow):
                                 key=key,
                                 controller_rtol=controller_rtol,
                                 controller_atol=controller_atol,
-                                trace_estimate_likelihood=trace_estimate_likelihood,
                                 adjoint=adjoint,
                                 **kwargs)
     prior = Gaussian(input_shape=input_shape)
     super().__init__(transform=transform,
                      prior=prior,
                      **kwargs)
+
+  @property
+  def neural_ode(self):
+    return self.transform.neural_ode
 
   @property
   def vector_field(self):
