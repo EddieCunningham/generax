@@ -43,7 +43,8 @@ class ProbabilityDistribution(eqx.Module, ABC):
 
   @abstractmethod
   def sample_and_log_prob(self,
-                          key: PRNGKeyArray) -> Array:
+                          key: PRNGKeyArray,
+                          y: Optional[Array] = None) -> Array:
     """**Arguments**:
 
     - `key`: The random number generator key.

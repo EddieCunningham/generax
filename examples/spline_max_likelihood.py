@@ -33,9 +33,9 @@ def get_dataset_iter():
 
 if __name__ == '__main__':
   from debug import *
-  from generax.distributions.flow_models import *
   from generax.distributions.base import *
   from generax.nn import *
+  import generax as gx
 
   train_ds = get_dataset_iter()
   data = next(train_ds)
@@ -44,7 +44,7 @@ if __name__ == '__main__':
   key = random.PRNGKey(0)
 
   # Construct the flow
-  flow = NeuralSpline(input_shape=x.shape[1:],
+  flow = gx.NeuralSpline(input_shape=x.shape[1:],
                   key=key,
                   n_flow_layers=3,
                   n_blocks=4,

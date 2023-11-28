@@ -201,7 +201,6 @@ class NeuralODE(eqx.Module):
     kwargs = {f.name: getattr(solution, f.name)
               for f in fields(solution)}
     kwargs['ys'] = z
-    assert z.shape == self.vector_field.input_shape
 
     new_solution = NeuralODESolution(log_det=log_det,
                                      total_vf_norm=total_vf_norm,

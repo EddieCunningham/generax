@@ -17,7 +17,6 @@ __all__ = ['GeneralTransform',
 from generax.flows.coupling import Coupling
 from generax.flows.affine import ShiftScale, PLUAffine
 from generax.flows.reshape import Reverse
-from generax.distributions.base import Gaussian
 from generax.flows.spline import RationalQuadraticSpline
 from generax.nn.resnet import ResNet
 

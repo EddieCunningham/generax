@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="generax",
-    version="0.0.4",
+    version="0.0.5",
     author="Edmond Cunningham",
     author_email="edmondcunnin@cs.umass.edu",
     description="Generative Models using Jax",

@@ -188,8 +188,8 @@ class Trainer(eqx.Module):
       self._aux_history.append(aux)
 
       # Update the progress bar
-      loss = aux['objective'].mean()
-      pbar.set_description(f'loss: {loss:.4f}')
+      description = ', '.join([f'{k}={v.mean():.4f}' for k, v in aux.items()])
+      pbar.set_description(description)
 
       # Checkpoint the model
       if (i and (i%checkpoint_every == 0)):
