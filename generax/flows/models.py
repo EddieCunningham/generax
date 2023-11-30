@@ -16,6 +16,7 @@ __all__ = ['GeneralTransform',
 
 from generax.flows.coupling import Coupling
 from generax.flows.affine import ShiftScale, PLUAffine
+from generax.flows.conv import OneByOneConv
 from generax.flows.reshape import Reverse
 from generax.flows.spline import RationalQuadraticSpline
 from generax.nn.resnet import ResNet
@@ -139,8 +140,7 @@ class GeneralImageTransform(Sequential):
                        cond_shape=cond_shape,
                        key=k2)
       layers.append(layer)
-      layers.append(PLUAffine(input_shape=input_shape,
-                              cond_shape=cond_shape,
+      layers.append(OneByOneConv(input_shape=input_shape,
                               key=k3))
       layers.append(ShiftScale(input_shape=input_shape,
                                cond_shape=cond_shape,
