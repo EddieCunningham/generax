@@ -49,13 +49,15 @@ class WeightNormDense(eqx.Module):
 
   def data_dependent_init(self,
                           x: Array,
-                          key: PRNGKeyArray = None) -> eqx.Module:
+                          key: PRNGKeyArray = None,
+                          before_square_plus: Optional[bool] = False) -> eqx.Module:
     """Initialize the parameters of the layer based on the data.
 
     **Arguments**:
 
     - `x`: The data to initialize the parameters with.
     - `key`: A `jax.random.PRNGKey` for initialization
+    - `before_square_plus`: In case we want the activations after square plus to be gaussian
 
     **Returns**:
     A new layer with the parameters initialized.
@@ -67,6 +69,10 @@ class WeightNormDense(eqx.Module):
     x = jnp.einsum('ij,bj->bi', W, x)
 
     std = jnp.std(x.reshape((-1, x.shape[-1])), axis=0) + 1e-5
+
+    if before_square_plus:
+      std = std - 1/std
+
     g = 1/std
 
     x *= g
@@ -127,13 +133,15 @@ class WeightNormConv(eqx.Module):
   def data_dependent_init(self,
                           x: Array,
                           y: Optional[Array] = None,
-                          key: PRNGKeyArray = None) -> eqx.Module:
+                          key: PRNGKeyArray = None,
+                          before_square_plus: Optional[bool] = False) -> eqx.Module:
     """Initialize the parameters of the layer based on the data.
 
     **Arguments**:
 
     - `x`: The data to initialize the parameters with.
     - `key`: A `jax.random.PRNGKey` for initialization
+    - `before_square_plus`: In case we want the activations after square plus to be gaussian
 
     **Returns**:
     A new layer with the parameters initialized.
@@ -145,6 +153,10 @@ class WeightNormConv(eqx.Module):
     x = util.conv(W, x, stride=self.stride, padding=self.padding)
 
     std = jnp.std(x.reshape((-1, x.shape[-1])), axis=0) + 1e-5
+
+    if before_square_plus:
+      std = std - 1/std
+
     g = 1/std
 
     x *= g

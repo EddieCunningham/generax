@@ -6,3 +6,4 @@ from generax.flows.reshape import *
 from generax.flows.spline import *
 from generax.flows.nonlinearities import *
 from generax.flows.logistic_cdf_mixture_logit import *
+from generax.flows.conv import *

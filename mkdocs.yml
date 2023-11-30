@@ -103,6 +103,7 @@ nav:
         - BijectiveTransforms:
             - api/flows/base.md
             - api/flows/affine.md
+            - api/flows/conv.md
             - api/flows/coupling.md
             - api/flows/ffjord.md
             - api/flows/nonlinearities.md

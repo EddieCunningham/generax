@@ -31,12 +31,11 @@ class ProbabilityDistribution(eqx.Module, ABC):
 
   def __init__(self,
                *,
-               input_shape: Union[int, Tuple[int]],
+               input_shape: Tuple[int],
                **kwargs):
     """**Arguments**:
 
-    - `input_shape`: The dimension of the space.  This can be either
-            an integer or a tuple of integers to represent images
+    - `input_shape`: The dimensions of the samples
     """
     assert isinstance(input_shape, tuple) or isinstance(input_shape, list)
     self.input_shape = input_shape
@@ -132,12 +131,11 @@ class ProbabilityPath(ProbabilityDistribution):
 
   def __init__(self,
                *,
-               input_shape: Union[int, Tuple[int]],
+               input_shape: Tuple[int],
                **kwargs):
     """**Arguments**:
 
-    - `input_shape`: The dimension of the space.  This can be either
-            an integer or a tuple of integers to represent images
+    - `input_shape`: The dimensions of the samples
     """
     assert isinstance(input_shape, tuple) or isinstance(input_shape, list)
     self.input_shape = input_shape
