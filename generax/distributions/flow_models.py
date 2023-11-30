@@ -430,3 +430,22 @@ class TimeDependentNormalizingFlow(ProbabilityPath, ABC):
     def ft(t):
       return self.to_data_space(t, x0, y=y, **kwargs)
     return jax.jvp(ft, (t,), (jnp.ones_like(t),))
+
+  def vector_field(self,
+                   t: Array,
+                   xt: Array,
+                   y: Optional[Array] = None,
+                   **kwargs) -> Array:
+    """The vector field that samples evolve on as t changes
+
+    **Arguments**:
+
+    - `t`: Time.
+    - `xt`: A point in the base space.
+    - `y`: The (optional) conditioning information.
+
+    **Returns**:
+    dxt/dt
+    """
+    x0 = self.to_base_space(t, xt, y=y, **kwargs)
+    return self.transform_and_vector_field(t, x0, y=y, **kwargs)

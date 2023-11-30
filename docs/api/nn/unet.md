@@ -1,6 +1,6 @@
 # UNet
 
-::: generax.nn.unet.TimeDependentUNet
+::: generax.nn.unet.UNet
     selection:
         members:
             - __init__

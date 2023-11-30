@@ -49,14 +49,15 @@ def get_dataset_iter(dtype=jnp.bfloat16):
 
 if __name__ == '__main__':
   from debug import *
-  from generax.nn.unet import TimeDependentUNet
+  from generax.nn.unet import UNet
   from generax.flows.affine import *
   from generax.distributions.flow_models import *
   from generax.distributions.base import *
   from generax.nn import *
   from generax.distributions.coupling import OTTCoupling
 
-  dtype = jnp.float32
+  # Use bfloat16 for training
+  dtype = jnp.bfloat16
 
   train_ds = get_dataset_iter(dtype=dtype)
   data = next(train_ds)
@@ -65,9 +66,9 @@ if __name__ == '__main__':
   key = random.PRNGKey(0)
 
   # Construct the neural network that learn the score
-  net = TimeDependentUNet(input_shape=x_shape,
+  net = UNet(input_shape=x_shape,
                           dim=128,
-                          dim_mults=[1, 2, 4, 4],
+                           dim_mults=[1, 2, 4, 4],
                           resnet_block_groups=8,
                           attn_heads=4,
                           attn_dim_head=32,
@@ -158,9 +159,8 @@ if __name__ == '__main__':
                        data_iterator=train_ds,
                        checkpoint_every=5000,
                        test_every=-1,
-                       retrain=False,
-                       just_load=True)
-
+                       retrain=True,
+                       just_load=False)
 
   # Pull samples from the model
   keys = random.split(key, 64)

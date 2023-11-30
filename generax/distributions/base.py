@@ -232,24 +232,24 @@ class ProbabilityPath(ProbabilityDistribution):
     """
     pass
 
-    @abstractmethod
-    def vector_field(self,
-                     t: Array,
-                     xt: Array,
-                     y: Optional[Array] = None,
-                     **kwargs) -> Array:
-      """The vector field that samples evolve on as t changes
+  @abstractmethod
+  def vector_field(self,
+                    t: Array,
+                    xt: Array,
+                    y: Optional[Array] = None,
+                    **kwargs) -> Array:
+    """The vector field that samples evolve on as t changes
 
-      **Arguments**:
+    **Arguments**:
 
-      - `t`: Time.
-      - `xt`: A point in the base space.
-      - `y`: The (optional) conditioning information.
+    - `t`: Time.
+    - `xt`: A point in the base space.
+    - `y`: The (optional) conditioning information.
 
-      **Returns**:
-      dxt/dt
-      """
-      pass
+    **Returns**:
+    dxt/dt
+    """
+    pass
 
 ################################################################################################################
 

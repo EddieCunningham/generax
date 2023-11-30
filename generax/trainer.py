@@ -188,7 +188,7 @@ class Trainer(eqx.Module):
       self._aux_history.append(aux)
 
       # Update the progress bar
-      description = ', '.join([f'{k}={v.mean():.4f}' for k, v in aux.items()])
+      description = ', '.join([f'{k}={float(v.mean()):.4f}' for k, v in aux.items()])
       pbar.set_description(description)
 
       # Checkpoint the model
@@ -214,3 +214,24 @@ class Trainer(eqx.Module):
     return train_state
 
 ################################################################################################################
+
+def default_optimizer(lr=1e-3,
+                      clip_norm=15.0,
+                      warmup=1000,
+                      decay_steps=3e5,
+                      end_value=0.1) -> optax.GradientTransformation:
+  """
+  Gradient clipping, AdamW, and cosine decay with warmup.
+  """
+  schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
+                                                peak_value=1.0,
+                                                warmup_steps=warmup,
+                                                decay_steps=decay_steps,
+                                                end_value=end_value,
+                                                exponent=1.0)
+  chain = []
+  chain.append(optax.clip_by_global_norm(clip_norm))
+  chain.append(optax.adamw(lr))
+  chain.append(optax.scale_by_schedule(schedule))
+  optimizer = optax.chain(*chain)
+  return optimizer

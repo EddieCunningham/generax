@@ -41,7 +41,7 @@ def get_dataset_iter(dtype=jnp.bfloat16):
 
 if __name__ == '__main__':
   from debug import *
-  from generax.nn.unet import TimeDependentUNet
+  from generax.nn.unet import UNet
   from generax.flows.affine import *
   from generax.distributions.flow_models import *
   from generax.distributions.base import *
@@ -57,7 +57,7 @@ if __name__ == '__main__':
   key = random.PRNGKey(0)
 
   # Construct the neural network that learn the score
-  net = TimeDependentUNet(input_shape=x_shape,
+  net = UNet(input_shape=x_shape,
                           dim=128,
                           dim_mults=[1, 2, 4],
                           resnet_block_groups=8,
