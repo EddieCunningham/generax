@@ -86,7 +86,7 @@ class OTTCoupling(Coupling):
     ot_prob = linear_problem.LinearProblem(geom)
 
     # Create a sinkhorn solver
-    solver = sinkhorn.Sinkhorn(ot_prob)
+    solver = sinkhorn.Sinkhorn()
 
     # Solve the OT problem
     ot = solver(ot_prob)
