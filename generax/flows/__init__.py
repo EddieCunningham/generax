@@ -8,3 +8,4 @@ from generax.flows.nonlinearities import *
 from generax.flows.logistic_cdf_mixture_logit import *
 from generax.flows.conv import *
 from generax.flows.pac_flow import *
+from generax.flows.coupling import *

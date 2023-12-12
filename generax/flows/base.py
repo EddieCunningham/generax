@@ -132,6 +132,26 @@ class BijectiveTransform(eqx.Module, ABC):
     """
     return self(x, y=y, inverse=True, **kwargs)
 
+  def get_inverse(self) -> 'BijectiveTransform':
+    """Get a new `BijectiveTransform` that is the inverse of this one.
+
+    **Returns**:
+    The inverse transformation.
+    """
+    class Wrapper(eqx.Module):
+      transform: BijectiveTransform
+      def __init__(self, transform):
+        self.transform = transform
+
+      def __call__(self, x, y=None, **kwargs):
+        return self.transform.inverse(x, y=y, **kwargs)
+
+      @property
+      def __wrapped__(self):
+        return self.transform
+
+    return Wrapper(self)
+
 ################################################################################################################
 
 class InjectiveTransform(BijectiveTransform, ABC):

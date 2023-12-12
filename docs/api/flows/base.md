@@ -7,6 +7,7 @@
             - __call__
             - data_dependent_init
             - inverse
+            - get_inverse
 
 ::: generax.flows.base.TimeDependentBijectiveTransform
     selection:

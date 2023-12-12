@@ -269,6 +269,7 @@ class HaarWavelet(BijectiveTransform):
   """Wavelet flow https://arxiv.org/pdf/2010.13821.pdf"""
 
   W: Array = eqx.field(static=True)
+  output_shape: Tuple[int] = eqx.field(static=True)
 
   def __init__(self,
                input_shape: Tuple[int],
@@ -284,6 +285,8 @@ class HaarWavelet(BijectiveTransform):
       raise ValueError('Width must be even')
     super().__init__(input_shape=input_shape,
                      **kwargs)
+
+    self.output_shape = (H//2, W//2, 4*C)
 
     # Construct the filter
     p, n = 0.5, -0.5

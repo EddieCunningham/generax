@@ -10,6 +10,8 @@ from generax.nn.resnet_blocks import *
 from generax.nn.time_condition import *
 import generax.util as util
 
+__all__ = ['UNet', 'Encoder']
+
 def freeu_filter(x, threshold, scale):
   """https://arxiv.org/pdf/2309.11497.pdf"""
 

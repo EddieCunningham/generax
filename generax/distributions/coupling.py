@@ -8,11 +8,11 @@ import equinox as eqx
 from abc import ABC, abstractmethod
 from jaxtyping import Array, PRNGKeyArray
 
-__all__ = ['Coupling',
+__all__ = ['JointCoupling',
            'UniformCoupling',
            'OTTCoupling']
 
-class Coupling(eqx.Module, ABC):
+class JointCoupling(eqx.Module, ABC):
   """Given two batches of samples from two distributions, this
   will compute a discrete distribution as done in [multisample flow matching](https://arxiv.org/pdf/2304.14772.pdf)
 
@@ -54,7 +54,7 @@ class Coupling(eqx.Module, ABC):
     idx = jax.random.categorical(rng_key, self.logits, axis=0)
     return self.x0[idx]
 
-class UniformCoupling(Coupling):
+class UniformCoupling(JointCoupling):
   """This is a uniform coupling between two distributions"""
 
   def compute_logits(self) -> Array:
@@ -71,7 +71,7 @@ from ott.geometry import pointcloud
 from ott.problems.linear import linear_problem
 from ott.solvers.linear import sinkhorn
 
-class OTTCoupling(Coupling):
+class OTTCoupling(JointCoupling):
   """Optimal transport coupling using the [ott library](https://ott-jax.readthedocs.io/en/latest/).
   This class uses the sinkhorn solver to compute the optimal transport coupling.
 
@@ -96,14 +96,14 @@ class OTTCoupling(Coupling):
     return jnp.log(mat + 1e-8)
 
 
-class BatchOTCoupling(Coupling):
+class BatchOTCoupling(JointCoupling):
   pass
 
-class BatchEOTCoupling(Coupling):
+class BatchEOTCoupling(JointCoupling):
   pass
 
-class StableCoupling(Coupling):
+class StableCoupling(JointCoupling):
   pass
 
-class HeuristicCoupling(Coupling):
+class HeuristicCoupling(JointCoupling):
   pass

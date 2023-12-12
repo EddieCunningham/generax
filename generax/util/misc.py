@@ -25,9 +25,16 @@ __all__ = ['broadcast_to_first_axis',
            'extract_multiple_batches_from_iterator',
            'ensure_path_exists',
            'conv',
-           'unbatch']
+           'unbatch',
+           'count_params']
 
 ################################################################################################################
+
+def count_params(module):
+  params, static = eqx.partition(module, eqx.is_array)
+  flat_params, treedef = jax.tree_util.tree_flatten(params)
+  n_params = sum([p.size for p in flat_params])
+  return n_params
 
 def unbatch(pytree):
   return jax.tree_util.tree_map(lambda x: x[0], pytree)

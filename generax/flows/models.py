@@ -38,22 +38,19 @@ class GeneralTransform(Sequential):
                n_blocks: int = 4,
                filter_shape: Optional[Tuple[int]] = (3, 3),
                cond_shape: Optional[Tuple[int]] = None,
+               coupling_split_dim: Optional[int] = None,
+               reverse_conditioning: Optional[bool] = False,
+               create_net: Optional[Callable[[PRNGKeyArray], Any]] = None,
                *,
                key: PRNGKeyArray,
                **kwargs):
 
-    # Build a dummy transfom to get the input and output shapes
-    transform_input_shape, net_input_shape = Coupling.get_split_shapes(input_shape)
-    transform = TransformType(input_shape=transform_input_shape,
-                              key=key)
-    net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
+    def init_transform(transform_input_shape, key):
+      return TransformType(input_shape=transform_input_shape,
+                            cond_shape=cond_shape,
+                            key=key)
 
-    if len(net_input_shape) == 3:
-      H, W, C = net_input_shape
-      assert net_output_size%(H*W) == 0
-      net_output_size = net_output_size // (H*W)
-
-    def create_net(key):
+    def _create_net(net_input_shape, net_output_size, key):
       return ResNet(input_shape=net_input_shape,
                     working_size=working_size,
                     hidden_size=hidden_size,
@@ -62,26 +59,27 @@ class GeneralTransform(Sequential):
                     filter_shape=filter_shape,
                     cond_shape=cond_shape,
                     key=key)
+    create_net = create_net if create_net is not None else _create_net
 
     layers = []
     keys = random.split(key, n_flow_layers)
     for i, k in enumerate(keys):
-      k1, k2, k3, k4 = random.split(k, 4)
-      transform = TransformType(input_shape=transform_input_shape,
-                                cond_shape=cond_shape,
-                                key=k1)
-      layer = Coupling(transform,
-                       create_net(k2),
+      k1, k2, k3 = random.split(k, 3)
+
+      layer = Coupling(init_transform,
+                       create_net,
                        input_shape=input_shape,
                        cond_shape=cond_shape,
-                       key=k2)
+                       split_dim=coupling_split_dim,
+                       reverse_conditioning=reverse_conditioning,
+                       key=k1)
       layers.append(layer)
       layers.append(PLUAffine(input_shape=input_shape,
                               cond_shape=cond_shape,
-                              key=k3))
+                              key=k2))
       layers.append(ShiftScale(input_shape=input_shape,
                                cond_shape=cond_shape,
-                               key=k4))
+                               key=k3))
 
     super().__init__(*layers, **kwargs)
 
@@ -120,19 +118,20 @@ class GeneralImageTransform(Sequential):
                n_flow_layers: int = 3,
                cond_shape: Optional[Tuple[int]] = None,
                unet: Optional[bool] = True,
+               coupling_split_dim: Optional[int] = None,
+               reverse_conditioning: Optional[bool] = False,
                *,
                key: PRNGKeyArray,
                **kwargs):
 
-    # Build a dummy transfom to get the input and output shapes
-    transform_input_shape, net_input_shape = Coupling.get_split_shapes(input_shape)
-    transform = TransformType(input_shape=transform_input_shape,
-                              key=key)
-    net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
+    def init_transform(transform_input_shape, key):
+      return TransformType(input_shape=transform_input_shape,
+                           cond_shape=cond_shape,
+                           key=key)
 
     if unet:
-      H, W, C = net_input_shape
-      def create_net(key):
+      def create_net(net_input_shape, net_output_size, key):
+        H, W, C = net_input_shape
         return UNet(input_shape=net_input_shape,
                       dim=kwargs.pop('dim', 32),
                       out_channels=net_output_size//(H*W),
@@ -144,7 +143,7 @@ class GeneralImageTransform(Sequential):
                       time_dependent=False,
                       key=key)
     else:
-      def create_net(key):
+      def create_net(net_input_shape, net_output_size, key):
         return Encoder(input_shape=net_input_shape,
                       dim=kwargs.pop('dim', 32),
                       dim_mults=kwargs.pop('dim_mults', (1, 2, 4)),
@@ -158,21 +157,20 @@ class GeneralImageTransform(Sequential):
     layers = []
     keys = random.split(key, n_flow_layers)
     for i, k in enumerate(keys):
-      k1, k2, k3, k4 = random.split(k, 4)
-      transform = TransformType(input_shape=transform_input_shape,
-                                cond_shape=cond_shape,
-                                key=k1)
-      layer = Coupling(transform,
-                       create_net(k2),
+      k1, k2, k3 = random.split(k, 3)
+      layer = Coupling(init_transform,
+                       create_net,
                        input_shape=input_shape,
                        cond_shape=cond_shape,
-                       key=k2)
+                       split_dim=coupling_split_dim,
+                       reverse_conditioning=reverse_conditioning,
+                       key=k1)
       layers.append(layer)
       layers.append(OneByOneConv(input_shape=input_shape,
-                              key=k3))
+                              key=k2))
       layers.append(ShiftScale(input_shape=input_shape,
                                cond_shape=cond_shape,
-                               key=k4))
+                               key=k3))
 
     super().__init__(*layers, **kwargs)
 
@@ -209,6 +207,7 @@ if __name__ == '__main__':
   jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
+  # x = random.normal(key, shape=(4, 8))
   x = random.normal(key, shape=(4, 8, 8, 2))
 
   layer = NeuralSplineImageTransform(input_shape=x.shape[1:],
@@ -217,7 +216,17 @@ if __name__ == '__main__':
                            dim_mults=(1, 2),
                            attn_heads=4,
                            attn_dim_head=8,
-                           key=key)
+                           key=key,
+                           reverse_conditioning=True,
+                           coupling_split_dim=1)
+
+  # layer = NeuralSplineTransform(input_shape=x.shape[1:],
+  #                               n_flow_layers=3,
+  #                               working_size=16,
+  #                               hidden_size=32,
+  #                               n_blocks=4,
+  #                               key=key)
+
 
   layer(x[0])
   layer = layer.data_dependent_init(x, key=key)
@@ -228,7 +237,8 @@ if __name__ == '__main__':
   x_reconstr, log_det2 = layer(z, inverse=True)
 
   G = jax.jacobian(lambda x: layer(x)[0])(x[0])
-  G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
+  if x.ndim > 2:
+    G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
   log_det_true = jnp.linalg.slogdet(G)[1]
 
   assert jnp.allclose(log_det, log_det_true)

@@ -1,6 +1,6 @@
 # Couplings
 
-::: generax.distributions.coupling.Coupling
+::: generax.distributions.coupling.JointCoupling
     selection:
         members:
             - __init__

@@ -12,6 +12,8 @@ from generax.flows.base import *
 import numpy as np
 
 __all__ = ['Reverse',
+           'Checkerboard',
+           'Squeeze',
            'Slice']
 
 class Reverse(BijectiveTransform):
@@ -49,6 +51,95 @@ class Reverse(BijectiveTransform):
     log_det = jnp.array(0.0)
     return z, log_det
 
+class Checkerboard(BijectiveTransform):
+  """Checkerboard pattern from https://arxiv.org/pdf/1605.08803.pdf"""
+
+  output_shape: Tuple[int] = eqx.field(static=True)
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    H, W, C = input_shape
+    assert W%2 == 0, 'Need even width'
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+    self.output_shape = (H, W//2, C*2)
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    The transformed input and 0
+    """
+    if inverse == False:
+      assert x.shape == self.input_shape
+      z = einops.rearrange(x, 'h (w k) c -> h w (c k)', k=2)
+    else:
+      assert x.shape == self.output_shape
+      z = einops.rearrange(x, 'h w (c k) -> h (w k) c', k=2)
+
+    log_det = jnp.array(0.0)
+    return z, log_det
+
+class Squeeze(BijectiveTransform):
+  """Space to depth.  (H, W, C) -> (H//2, W//2, C*4)"""
+
+  output_shape: Tuple[int] = eqx.field(static=True)
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    H, W, C = input_shape
+    assert H % 2 == 0, 'Need even height'
+    assert W % 2 == 0, 'Need even width'
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+    self.output_shape = (H//2, W//2, C*4)
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    The transformed input and 0
+    """
+    if inverse == False:
+      assert x.shape == self.input_shape
+      z = einops.rearrange(x, '(h m) (w n) c -> h w (c m n)', m=2, n=2)
+    else:
+      assert x.shape == self.output_shape
+      z = einops.rearrange(x, 'h w (c m n) -> (h m) (w n) c', m=2, n=2)
+
+    log_det = jnp.array(0.0)
+    return z, log_det
+
 class Slice(InjectiveTransform):
   """Slice an input to reduce the dimension
   """
@@ -56,7 +147,6 @@ class Slice(InjectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                output_shape: Tuple[int],
-               key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
@@ -120,23 +210,26 @@ if __name__ == '__main__':
   jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
-  x, y = random.normal(key, shape=(2, 10, 2, 2, 5))
+  x, y = random.normal(key, shape=(2, 10, 8, 8, 3))
 
-  layer = Slice(input_shape=x.shape[1:],
-                          output_shape=(2, 2, 3),
-                          key=key)
-  x = eqx.filter_vmap(layer.project)(x)
-
+  layer = Squeeze(input_shape=x.shape[1:],
+                       key=key)
+  layer_inv = layer.get_inverse()
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)
+  check, log_det3 = layer_inv(z)
 
   G = jax.jacobian(lambda x: layer(x)[0])(x[0])
-  G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
+  if x.ndim > 2:
+    G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
   log_det_true = 0.5*jnp.linalg.slogdet(G@G.T)[1]
 
   assert jnp.allclose(log_det, log_det_true)
+  assert jnp.allclose(log_det, log_det2)
+  assert jnp.allclose(log_det, log_det3)
   assert jnp.allclose(x[0], x_reconstr)
+  assert jnp.allclose(check, x_reconstr)
 
 
   import pdb; pdb.set_trace()

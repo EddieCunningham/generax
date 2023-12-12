@@ -11,7 +11,8 @@ from generax.flows.base import BijectiveTransform
 import numpy as np
 from generax.nn.resnet import ResNet
 
-__all__ = ['Coupling']
+__all__ = ['Coupling',
+           'RavelParameters']
 
 class RavelParameters(eqx.Module):
   """Flatten and concatenate the parameters of a eqx.Module
@@ -67,14 +68,32 @@ class Coupling(BijectiveTransform):
   The conditioning network will be fixed
 
   ```python
-  # Intended usage:
-  layer = Coupling(BijectiveTransform,
-                   eqx.Module)
+  # Example of intended usage:
+
+  def initialize_scale(transform_input_shape, key):
+    return ShiftScale(input_shape=transform_input_shape,
+                      key=key,
+                      **kwargs)
+
+  def initialize_network(net_input_shape, net_output_size, key):
+    return ResNet(input_shape=net_input_shape,
+                  out_size=net_output_size,
+                  key=key,
+                  **kwargs)
+
+  layer = Coupling(transform_init=initialize_scale,
+                   net_init=initialize_network,
+                   input_shape=input_shape,
+                   cond_shape=cond_shape,
+                   key=key,
+                   reverse_conditioning=True,
+                   split_dim=1)
+
   z, log_det = layer(x, y)
   ```
 
   **Attributes**:
-  - `transform`: The bijective transformation to use.
+  - `params_to_transform`: A module that turns an array of parameters into an eqx.Module.
   - `scale`: A scalar that we'll use to start with small parameter values
   - `net`: The neural network to use.
   """
@@ -83,11 +102,16 @@ class Coupling(BijectiveTransform):
   scale: Array
   params_to_transform: RavelParameters
 
+  split_dim: Optional[int] = eqx.field(static=True)
+  reverse_conditioning: bool = eqx.field(static=True)
+
   def __init__(self,
-               transform: BijectiveTransform,
-               net: eqx.Module,
+               transform_init: Callable[[Tuple[int]],BijectiveTransform],
+               net_init: Callable[[Tuple[int],int],eqx.Module],
                input_shape: Tuple[int],
                cond_shape: Optional[Tuple[int]] = None,
+               split_dim: Optional[int] = None,
+               reverse_conditioning: Optional[bool] = False,
                *,
                key: PRNGKeyArray,
                **kwargs):
@@ -97,15 +121,25 @@ class Coupling(BijectiveTransform):
     - `net`: The neural network to generate the transform parameters.
     - `input_shape`: The shape of the input
     - `cond_shape`: The shape of the conditioning information
+    - `split_dim`: The number of dimension to split the last axis on.  If `None`, defaults to `dim//2`.
+    - `reverse_conditioning`: If `True`, condition on the first part of the input instead of the second part.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
     super().__init__(input_shape=input_shape,
                      cond_shape=cond_shape,
                      **kwargs)
 
-    # Check the input shapes of the transform and network
-    x1_shape, x2_shape = self.get_split_shapes(input_shape)
-    assert transform.input_shape == x1_shape
+    k1, k2 = random.split(key, 2)
+
+    self.split_dim = split_dim if split_dim is not None else input_shape[-1]//2
+    self.reverse_conditioning = reverse_conditioning
+
+    # Get the shapes of the input to the transform and the network
+    transform_input_shape, net_input_shape = self.get_split_shapes(input_shape)
+    transform = transform_init(transform_input_shape, key=k1)
+
+    net_output_size = self.get_net_output_shapes(input_shape, transform)
+    net = net_init(net_input_shape, net_output_size, key=k2)
 
     self.net = net
 
@@ -141,22 +175,27 @@ class Coupling(BijectiveTransform):
 
   def split(self, x: Array) -> Tuple[Array, Array]:
     """Split the input into two halves."""
-    split_dim = x.shape[-1]//2
-    x1, x2 = x[..., :split_dim], x[..., split_dim:]
+    x1, x2 = x[..., :self.split_dim], x[..., self.split_dim:]
+    if self.reverse_conditioning:
+      return x2, x1
     return x1, x2
 
-  @classmethod
-  def get_split_shapes(cls,
-                       input_shape: Tuple[int],
-                       split_dim: Optional[int] = None) -> Tuple[Tuple[int]]:
-    split_dim = input_shape[-1]//2 if split_dim is None else split_dim
-    x1_dim, x2_dim = split_dim, input_shape[-1] - split_dim
+  def combine(self, x1: Array, x2: Array) -> Array:
+    """Combine the two halves of the input."""
+    if self.reverse_conditioning:
+      return jnp.concatenate([x2, x1], axis=-1)
+    return jnp.concatenate([x1, x2], axis=-1)
+
+  def get_split_shapes(self,
+                       input_shape: Tuple[int]) -> Tuple[Tuple[int]]:
+    x1_dim, x2_dim = self.split_dim, input_shape[-1] - self.split_dim
     x1_shape = input_shape[:-1] + (x1_dim,)
     x2_shape = input_shape[:-1] + (x2_dim,)
+    if self.reverse_conditioning:
+      return x2_shape, x1_shape
     return x1_shape, x2_shape
 
-  @classmethod
-  def get_net_output_shapes(cls,
+  def get_net_output_shapes(self,
                             input_shape: Tuple[int],
                             transform: BijectiveTransform) -> Tuple[Tuple[int],int]:
     """
@@ -168,9 +207,9 @@ class Coupling(BijectiveTransform):
     - `net_output_size`: The size of the output of the neural network.  This is a single integer
                          because the network is expected to produce a single vector.
     """
-    x1_shape, x2_shape = cls.get_split_shapes(input_shape)
+    x1_shape, x2_shape = self.get_split_shapes(input_shape)
     if x1_shape != transform.input_shape:
-      raise ValueError(f'The transform {transform} needs to have an input shape equal to {x1_shape}.  Use Coupling.get_input_shapes to get this shape.')
+      raise ValueError(f'The transform {transform} needs to have an input shape equal to {x1_shape}.  Use `get_input_shapes` to get this shape.')
     params_to_transform = RavelParameters(transform)
     net_output_size = params_to_transform.flat_params_size
     return net_output_size
@@ -201,7 +240,7 @@ class Coupling(BijectiveTransform):
     transform = self.params_to_transform(params)
     z1, log_det = transform(x1, y=y, inverse=inverse, **kwargs)
 
-    z = jnp.concatenate([z1, x2], axis=-1)
+    z = self.combine(z1, x2)
     return z, log_det
 
 ################################################################################################################
@@ -224,28 +263,28 @@ if __name__ == '__main__':
   y, cond_shape = None, None
 
   input_shape = x.shape[1:]
-  transform_input_shape, net_input_shape = Coupling.get_split_shapes(input_shape)
 
-  transform = ShiftScale(input_shape=transform_input_shape,
-                            key=key)
-  net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
+  def initialize_scale(transform_input_shape, key):
+    return ShiftScale(input_shape=transform_input_shape,
+                      key=key)
 
-  net = ResNet(input_shape=net_input_shape,
-                   working_size=4,
-                    hidden_size=4,
-                    out_size=net_output_size,
-                    n_blocks=2,
-                    filter_shape=(3, 3),
-                    cond_shape=cond_shape,
-                    key=key)
+  def initialize_network(net_input_shape, net_output_size, key):
+    return ResNet(input_shape=net_input_shape,
+                  working_size=4,
+                  hidden_size=4,
+                  out_size=net_output_size,
+                  n_blocks=2,
+                  filter_shape=(3, 3),
+                  cond_shape=cond_shape,
+                  key=key)
 
-  transform = ShiftScale(input_shape=transform_input_shape,
-                            key=key)
-  layer = Coupling(transform,
-                   net,
+  layer = Coupling(transform_init=initialize_scale,
+                   net_init=initialize_network,
                    input_shape=input_shape,
-                    cond_shape=cond_shape,
-                   key=key)
+                   cond_shape=cond_shape,
+                   key=key,
+                   reverse_conditioning=True,
+                   split_dim=1)
 
   layer(x[0])
   layer = layer.data_dependent_init(x, y=y, key=key)
