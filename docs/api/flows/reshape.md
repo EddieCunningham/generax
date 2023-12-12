@@ -24,7 +24,7 @@
             - data_dependent_init
             - inverse
 
-::: generax.flows.affine.Slice
+::: generax.flows.reshape.Slice
     selection:
         members:
             - __init__

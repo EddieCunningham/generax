@@ -12,7 +12,7 @@ from jaxtyping import Array, PRNGKeyArray
 __all__ = ['ProbabilityDistribution',
            'ProductDistribution',
            'ProbabilityPath',
-           'EmpiricalDistirbution',
+           'EmpiricalDistribution',
            'Gaussian']
 
 class ProbabilityDistribution(eqx.Module, ABC):
@@ -200,7 +200,7 @@ class ProductDistribution(ProbabilityDistribution):
 
 ################################################################################################################
 
-class EmpiricalDistirbution(ProbabilityDistribution):
+class EmpiricalDistribution(ProbabilityDistribution):
   """An empirical distribution.  This can be used as a wrapper around data
   """
 
