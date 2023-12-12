@@ -9,18 +9,23 @@ from jaxtyping import Array, PRNGKeyArray
 from generax.flows.base import BijectiveTransform, Sequential
 
 __all__ = ['GeneralTransform',
+           'NICETransform',
            'RealNVPTransform',
-           'NeuralSplineTransform']
+           'NeuralSplineTransform',
+           'GeneralImageTransform',
+           'NICEImageTransform',
+           'RealNVPImageTransform',
+           'NeuralSplineImageTransform']
 
 ################################################################################################################
 
 from generax.flows.coupling import Coupling
-from generax.flows.affine import ShiftScale, PLUAffine
+from generax.flows.affine import Shift, ShiftScale, PLUAffine
 from generax.flows.conv import OneByOneConv
 from generax.flows.reshape import Reverse
 from generax.flows.spline import RationalQuadraticSpline
 from generax.nn.resnet import ResNet
-from generax.nn.unet import Encoder
+from generax.nn.unet import UNet, Encoder
 
 class GeneralTransform(Sequential):
 
@@ -80,6 +85,14 @@ class GeneralTransform(Sequential):
 
     super().__init__(*layers, **kwargs)
 
+class NICETransform(GeneralTransform):
+  def __init__(self,
+               *args,
+               **kwargs):
+    super().__init__(TransformType=Shift,
+                     *args,
+                     **kwargs)
+
 class RealNVPTransform(GeneralTransform):
   def __init__(self,
                *args,
@@ -106,6 +119,7 @@ class GeneralImageTransform(Sequential):
                input_shape: Tuple[int],
                n_flow_layers: int = 3,
                cond_shape: Optional[Tuple[int]] = None,
+               unet: Optional[bool] = True,
                *,
                key: PRNGKeyArray,
                **kwargs):
@@ -116,16 +130,30 @@ class GeneralImageTransform(Sequential):
                               key=key)
     net_output_size = Coupling.get_net_output_shapes(input_shape, transform)
 
-    def create_net(key):
-      return Encoder(input_shape=net_input_shape,
-                    dim=kwargs.pop('dim', 32),
-                    dim_mults=kwargs.pop('dim_mults', (1, 2, 4)),
-                    resnet_block_groups=kwargs.pop('resnet_block_groups', 8),
-                    attn_heads=kwargs.pop('attn_heads', 4),
-                    attn_dim_head=kwargs.pop('attn_dim_head', 32),
-                    out_size=net_output_size,
-                    cond_shape=cond_shape,
-                    key=key)
+    if unet:
+      H, W, C = net_input_shape
+      def create_net(key):
+        return UNet(input_shape=net_input_shape,
+                      dim=kwargs.pop('dim', 32),
+                      out_channels=net_output_size//(H*W),
+                      dim_mults=kwargs.pop('dim_mults', (1, 2, 4)),
+                      resnet_block_groups=kwargs.pop('resnet_block_groups', 8),
+                      attn_heads=kwargs.pop('attn_heads', 4),
+                      attn_dim_head=kwargs.pop('attn_dim_head', 32),
+                      cond_shape=cond_shape,
+                      time_dependent=False,
+                      key=key)
+    else:
+      def create_net(key):
+        return Encoder(input_shape=net_input_shape,
+                      dim=kwargs.pop('dim', 32),
+                      dim_mults=kwargs.pop('dim_mults', (1, 2, 4)),
+                      resnet_block_groups=kwargs.pop('resnet_block_groups', 8),
+                      attn_heads=kwargs.pop('attn_heads', 4),
+                      attn_dim_head=kwargs.pop('attn_dim_head', 32),
+                      out_size=net_output_size,
+                      cond_shape=cond_shape,
+                      key=key)
 
     layers = []
     keys = random.split(key, n_flow_layers)
@@ -147,6 +175,14 @@ class GeneralImageTransform(Sequential):
                                key=k4))
 
     super().__init__(*layers, **kwargs)
+
+class NICEImageTransform(GeneralImageTransform):
+  def __init__(self,
+               *args,
+               **kwargs):
+    super().__init__(TransformType=Shift,
+                     *args,
+                     **kwargs)
 
 class RealNVPImageTransform(GeneralImageTransform):
   def __init__(self,

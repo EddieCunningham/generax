@@ -37,6 +37,7 @@ class UNet(eqx.Module):
 
   input_shape: Tuple[int] = eqx.field(static=True)
   dim: int = eqx.field(static=True)
+  out_channels: int = eqx.field(static=True)
   dim_mults: Tuple[int] = eqx.field(static=True)
   in_out: Tuple[Tuple[int, int]] = eqx.field(static=True)
   conv_in: WeightNormConv
@@ -55,6 +56,7 @@ class UNet(eqx.Module):
   def __init__(self,
                input_shape: Tuple[int],
                dim: int = 16,
+               out_channels: Optional[int] = None,
                dim_mults: Tuple[int] = (1, 2, 4, 8),
                resnet_block_groups: int = 8,
                attn_heads: int = 4,
@@ -68,6 +70,7 @@ class UNet(eqx.Module):
 
     - `input_shape`: The input shape.  Output size is the same as shape.
     - `dim`: The dimension of the features
+    - `out_channels`: The number of output channels.  If None, then the same as the input.
     - `dim_mults`: The dimension of the features at each downsampling
     - `resnet_block_groups`: The number of resnet blocks per downsampling
     - `attn_heads`: The number of attention heads per downsampling
@@ -81,6 +84,7 @@ class UNet(eqx.Module):
       raise ValueError(f"Image size {(H, W)} is too small for {len(dim_mults)} downsamples.")
     self.input_shape = input_shape
     self.dim = dim
+    self.out_channels = C if out_channels is None else out_channels
     self.dim_mults = dim_mults
     self.freeu = freeu
     self.time_dependent = time_dependent
@@ -175,9 +179,9 @@ class UNet(eqx.Module):
     # Final
     self.final_block = make_resblock(next(key_iter), (H, W, dim_in + dim_in), dim_in)
     self.proj_out = WeightNormConv(input_shape=(H, W, dim_in),
-                                    out_size=C,
-                                    filter_shape=(1, 1),
-                                    key=next(key_iter))
+                                   out_size=self.out_channels,
+                                   filter_shape=(1, 1),
+                                   key=next(key_iter))
 
   def data_dependent_init(self,
                           x: Array,
@@ -196,7 +200,7 @@ class UNet(eqx.Module):
     """
     return self
 
-  def __call__(self, *args) -> Array:
+  def __call__(self, *args, **kwargs) -> Array:
     if self.time_dependent:
       if len(args) == 3:
         t, x, y = args

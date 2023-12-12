@@ -1,5 +1,13 @@
 # Affine
 
+::: generax.flows.affine.Shift
+    selection:
+        members:
+            - __init__
+            - __call__
+            - data_dependent_init
+            - inverse
+
 ::: generax.flows.affine.ShiftScale
     selection:
         members:
@@ -48,3 +56,12 @@
             - data_dependent_init
             - inverse
             - vector_field
+
+::: generax.flows.affine.TallDenseLinear
+    selection:
+        members:
+            - __init__
+            - __call__
+            - data_dependent_init
+            - inverse
+            - project

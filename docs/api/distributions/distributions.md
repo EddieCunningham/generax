@@ -9,6 +9,22 @@
             - log_prob
             - score
 
+::: generax.distributions.base.ProductDistribution
+    selection:
+        members:
+            - __init__
+            - sample_and_log_prob
+            - sample
+            - log_prob
+            - score
+
+::: generax.distributions.base.EmpiricalDistribution
+    selection:
+        members:
+            - __init__
+            - sample
+            - train_iterator
+
 ::: generax.distributions.base.ProbabilityPath
     selection:
         members:

@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
 from generax.distributions.base import ProbabilityDistribution, Gaussian, ProbabilityPath
-from generax.flows.base import BijectiveTransform, TimeDependentBijectiveTransform
+from generax.flows.base import BijectiveTransform, InjectiveTransform, TimeDependentBijectiveTransform
 from generax.flows.models import RealNVPTransform, NeuralSplineTransform
 from generax.flows.ffjord import FFJORDTransform
 
@@ -137,6 +137,81 @@ class NormalizingFlow(ProbabilityDistribution, ABC):
     # Turn the new parameters into a new module
     get_transform = lambda tree: tree.transform
     return eqx.tree_at(get_transform, self, new_layer)
+
+################################################################################################################
+
+class RectangularFlow(NormalizingFlow):
+  """A flow with an injective transformation, i.e. the base space has a lower
+  dimensionality than the data space.
+  """
+
+  transform: InjectiveTransform
+  output_shape: Tuple[int]
+
+  def __init__(self,
+               transform: InjectiveTransform,
+                prior: ProbabilityDistribution,
+                **kwargs):
+    """**Arguments**:
+
+    - `transform`: A bijective transformation
+    - `prior`: The prior distribution
+    """
+    assert isinstance(transform, InjectiveTransform)
+    self.output_shape = transform.output_shape
+    super().__init__(transform=transform,
+                     prior=prior,
+                     **kwargs)
+
+  def project(self,
+              x: Array,
+              y: Optional[Array] = None,
+              **kwargs) -> Array:
+    """Project a point onto the image of the transformation.
+
+    **Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+
+    **Returns**:
+    z
+    """
+    return self.transform.project(x, y=y, **kwargs)
+
+  def sample_and_log_prob(self,
+                          key: PRNGKeyArray,
+                          y: Optional[Array] = None,
+                          **kwargs) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+    - `y`: The conditioning information
+
+    **Returns**:
+    A single sample from the model.  Use vmap to get more samples.
+    """
+    z, log_pz = self.prior.sample_and_log_prob(key)
+    x, _ = self.transform(z, y=y, inverse=True, **kwargs)
+    log_det = self.transform.log_determiant(z, y=y, **kwargs)
+    return x, log_pz + log_det
+
+  def log_prob(self,
+               x: Array,
+               y: Optional[Array] = None,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute logp(x) at.
+    - `y`: The conditioning information
+
+    **Returns**:
+    The log likelihood of x under the model.
+    """
+    z, _ = self.transform(x, y=y, **kwargs)
+    log_pz = self.prior.log_prob(z)
+    log_det = self.transform.log_determiant(z, y=y, **kwargs)
+    return log_pz + log_det
 
 ################################################################################################################
 

@@ -41,7 +41,6 @@ class WeightNormDense(eqx.Module):
     self.in_size = in_size
     self.out_size = out_size
 
-
     w_init = jax.nn.initializers.he_uniform(in_axis=-2, out_axis=-1)
     self.W = w_init(key, shape=(out_size, in_size))
     self.g = jnp.array(1.0)

@@ -25,11 +25,21 @@
             - data_dependent_init
             - inverse
 
-::: generax.flows.reshape.Reverse
+::: generax.flows.base.InjectiveTransform
     selection:
         members:
             - __init__
             - __call__
             - data_dependent_init
             - inverse
+            - project
+            - log_determinant
+            - log_determinant_surrogate
 
+::: generax.flows.base.InjectiveSequential
+    selection:
+        members:
+            - __init__
+            - __call__
+            - data_dependent_init
+            - inverse

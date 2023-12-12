@@ -24,6 +24,14 @@
             - data_dependent_init
             - inverse
 
+::: generax.flows.conv.HaarWavelet
+    selection:
+        members:
+            - __init__
+            - __call__
+            - data_dependent_init
+            - inverse
+
 ::: generax.flows.pac_flow.EmergingConv
     selection:
         members:

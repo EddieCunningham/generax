@@ -10,7 +10,9 @@ import diffrax
 from jaxtyping import Array, PRNGKeyArray
 
 __all__ = ['ProbabilityDistribution',
+           'ProductDistribution',
            'ProbabilityPath',
+           'EmpiricalDistirbution',
            'Gaussian']
 
 class ProbabilityDistribution(eqx.Module, ABC):
@@ -110,6 +112,163 @@ class ProbabilityDistribution(eqx.Module, ABC):
     The log likelihood of x under the model.
     """
     return eqx.filter_grad(self.log_prob)(x, y=y, key=key)
+
+################################################################################################################
+
+class ProductDistribution(ProbabilityDistribution):
+  """A product of probability distributions
+  """
+
+  dists: Tuple[ProbabilityDistribution]
+
+  def __init__(self,
+               *distributions: Tuple[ProbabilityDistribution],
+               **kwargs):
+    """**Arguments**:
+
+    - `distributions`: The distributions to take the product of.
+    """
+    self.dists = distributions
+
+    # Check that the input shapes are all the same on all but the
+    # first axis and construct the total input shape
+    input_shape = list(self.dists[0].input_shape)
+    input_shape_end = self.dists[0].input_shape[1:]
+    for dist in self.dists[1:]:
+      assert dist.input_shape[1:] == input_shape_end
+      input_shape[0] += dist.input_shape[0]
+    input_shape = tuple(input_shape)
+
+    super().__init__(input_shape=input_shape, **kwargs)
+
+  def sample_and_log_prob(self,
+                          key: PRNGKeyArray,
+                          y: Optional[Array] = None) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    A single sample from the model with its log probability.
+
+    Use eqx.filter_vmap to get more samples!  For example,
+    ```python
+    keys = random.split(key, n_samples)
+    x, log_px = eqx.filter_vmap(self.sample_and_log_prob)(keys)
+    ```
+    """
+    # Sample from each of our distributions
+    keys = random.split(key, len(self.dists))
+    xs = []
+    log_px = 0.0
+    for i, key in enumerate(keys):
+      x, _log_px = self.dists[i].sample_and_log_prob(key, y=y)
+      xs.append(x)
+      log_px += _log_px
+
+    # Concatenate the samples along the first axis
+    x = jnp.concatenate(xs, axis=0)
+    return x, log_px
+
+  def log_prob(self,
+               x: Array,
+               y: Optional[Array] = None,
+               key: Optional[PRNGKeyArray] = None) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute logp(x) at.
+    - `y`: The (optional) conditioning information.
+    - `key`: The random number generator key.  Can be passed in the event
+             that we're getting a stochastic estimate of the log prob.
+
+    **Returns**:
+    The log likelihood of x under the model.
+    """
+    assert x.shape == self.input_shape
+
+    # Figure out how to split the input
+    split_indices = jnp.cumsum(jnp.array([0] + [dist.input_shape[0] for dist in self.dists]))
+    splits = list(zip(split_indices[:-1], split_indices[1:]))
+
+    # Compute the log prob of each sample
+    log_px = 0.0
+    for i, (start, end) in enumerate(splits):
+      _x = x[start:end]
+      log_px += self.dists[i].log_prob(_x, y=y, key=key)
+
+    return log_px
+
+################################################################################################################
+
+class EmpiricalDistirbution(ProbabilityDistribution):
+  """An empirical distribution.  This can be used as a wrapper around data
+  """
+
+  data: Array
+
+  def __init__(self,
+               data: Array,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The dimensions of the samples
+    """
+    input_shape = data.shape[1:]
+    super().__init__(input_shape=input_shape, **kwargs)
+
+  def sample_and_log_prob(self):
+    assert 0, "Can't compute"
+
+  def log_prob(self):
+    assert 0, "Can't compute"
+
+  def sample(self,
+             key: PRNGKeyArray,
+             y: Optional[Array] = None) -> Array:
+    """
+    **Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    Samples from the model
+
+    Use eqx.filter_vmap to get more samples!  For example,
+    ```python
+    keys = random.split(key, n_samples)
+    samples = eqx.filter_vmap(self.sample)(keys)
+    ```
+    """
+    return random.choice(key, self.data, shape=(1,))[0]
+
+  def train_iterator(self,
+                     key: PRNGKeyArray,
+                     batch_size: int) -> Mapping[str, Array]:
+    """An iterator over the training data.  This is compatible with the
+    Trainer class in this package.  Use like:
+    ```python
+    train_iter = empirical_dist.train_iterator(key, batch_size=128)
+    data_batch = next(train_iter)
+    ```
+
+    **Arguments**:
+
+    - `key`: The random number generator key.
+    - `batch_size`: The batch size.
+
+    **Returns**:
+    An iterator over the training data that yields a dictionary
+    with the key `x` and the value the training data.
+    """
+
+    total_choices = jnp.arange(self.data.shape[0])
+    while True:
+      key, _ = random.split(key, 2)
+      idx = random.choice(key,
+                          total_choices,
+                          shape=(batch_size,),
+                          replace=True)
+      yield dict(x=self.data[idx])
 
 ################################################################################################################
 
@@ -269,7 +428,8 @@ class Gaussian(ProbabilityDistribution):
     return random.normal(key, shape=self.input_shape)
 
   def log_prob(self,
-               x: Array) -> Array:
+               x: Array,
+               **kwargs) -> Array:
     """**Arguments**:
 
     - `x`: The point we want to compute logp(x) at.
@@ -277,10 +437,12 @@ class Gaussian(ProbabilityDistribution):
     **Returns**:
     The log likelihood of x under the model.
     """
+    assert x.shape == self.input_shape
     return jax.scipy.stats.norm.logpdf(x).sum()
 
   def sample_and_log_prob(self,
-                          key: PRNGKeyArray) -> Array:
+                          key: PRNGKeyArray,
+                          **kwargs) -> Array:
     """**Arguments**:
 
     - `key`: The random number generator key.
@@ -293,3 +455,28 @@ class Gaussian(ProbabilityDistribution):
     return x, log_px
 
 ################################################################################################################
+
+if __name__ == '__main__':
+  from debug import *
+  import matplotlib.pyplot as plt
+  import generax.util as util
+  # switch to x64
+  jax.config.update("jax_enable_x64", True)
+
+  key = random.PRNGKey(0)
+  x = random.normal(key, shape=(20, 10, 3, 4))
+
+  # Test the product distribution
+  p1 = Gaussian(input_shape=(5, 3, 4))
+  p2 = Gaussian(input_shape=(3, 3, 4))
+  p3 = Gaussian(input_shape=(2, 3, 4))
+  p_prod = ProductDistribution(p1, p2, p3)
+
+  p_comp = Gaussian(input_shape=(10, 3, 4))
+
+  x, log_px1 = p_prod.sample_and_log_prob(key)
+  log_px2 = p_comp.log_prob(x)
+  log_px3 = p_prod.log_prob(x)
+  assert jnp.allclose(log_px1, log_px2)
+  assert jnp.allclose(log_px3, log_px2)
+

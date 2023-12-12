@@ -146,8 +146,10 @@ class Coupling(BijectiveTransform):
     return x1, x2
 
   @classmethod
-  def get_split_shapes(cls, input_shape: Tuple[int]) -> Tuple[Tuple[int]]:
-    split_dim = input_shape[-1]//2
+  def get_split_shapes(cls,
+                       input_shape: Tuple[int],
+                       split_dim: Optional[int] = None) -> Tuple[Tuple[int]]:
+    split_dim = input_shape[-1]//2 if split_dim is None else split_dim
     x1_dim, x2_dim = split_dim, input_shape[-1] - split_dim
     x1_shape = input_shape[:-1] + (x1_dim,)
     x2_shape = input_shape[:-1] + (x2_dim,)
@@ -172,27 +174,6 @@ class Coupling(BijectiveTransform):
     params_to_transform = RavelParameters(transform)
     net_output_size = params_to_transform.flat_params_size
     return net_output_size
-
-
-  @classmethod
-  def get_net_input_and_output_shapes(cls,
-                                      input_shape: Tuple[int],
-                                      transform: BijectiveTransform) -> Tuple[Tuple[int],int]:
-    """
-    **Arguments**:
-    - `input_shape`: The shape of the input
-    - `transform`: The bijective transformation to use.
-
-    **Returns**:
-    - `net_input_shape`: The shape of the input to the neural network.  This is a tuple of ints
-    - `net_output_size`: The size of the output of the neural network.  This is a single integer
-                         because the network is expected to produce a single vector.
-    """
-    x1_shape, x2_shape = cls.get_split_shapes(input_shape)
-    net_input_shape = x2_shape
-    params_to_transform = RavelParameters(transform)
-    net_output_size = params_to_transform.flat_params_size
-    return x1_shape, net_input_shape, net_output_size
 
   def __call__(self,
                x: Array,

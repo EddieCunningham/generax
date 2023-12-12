@@ -11,12 +11,94 @@ import generax.util.misc as misc
 from generax.flows.base import *
 import numpy as np
 
-__all__ = ['ShiftScale',
+__all__ = ['Shift',
+           'ShiftScale',
            'DenseLinear',
            'DenseAffine',
+           'TallDenseLinear',
            'CaleyOrthogonalMVP',
            'PLUAffine',
            'ConditionalOptionalTransport']
+
+class Shift(BijectiveTransform):
+  """This represents a shift transformation
+  This is NICE https://arxiv.org/pdf/1410.8516.pdf when used
+  in a coupling layer.
+
+  **Attributes**:
+  - `b`: The shift parameter.
+  """
+  b: Array
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+
+    # Initialize the parameters randomly
+    self.b = random.normal(key, shape=input_shape)
+
+  def data_dependent_init(self,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert x.shape[1:] == self.input_shape, 'x must be batched'
+    mean, std = misc.mean_and_std(x, axis=0)
+
+    # Initialize the parameters so that z will have
+    # zero mean and unit variance
+    b = mean
+
+    # Turn the new parameters into a new module
+    get_b = lambda tree: tree.b
+    updated_layer = eqx.tree_at(get_b, self, b)
+
+    return updated_layer
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool=False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    `(z, log_det)`
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+
+    if inverse == False:
+      z = x - self.b
+    else:
+      z = x + self.b
+
+    log_det = jnp.array(0.0)
+
+    return z, log_det
+
+################################################################################################################
 
 class ShiftScale(BijectiveTransform):
   """This represents a shift and scale transformation.
@@ -173,6 +255,84 @@ class DenseLinear(BijectiveTransform):
       log_det *= -1
 
     return z, log_det
+
+################################################################################################################
+
+class TallDenseLinear(InjectiveTransform):
+  """Matrix vector product with a tall matrix.
+
+  **Attributes**:
+  - `W`: The weight matrix
+  """
+
+  W: Array
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               output_shape: Tuple[int],
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    assert len(input_shape) == 1, 'Only implemented for 1d data'
+    super().__init__(input_shape=input_shape,
+                     output_shape=output_shape,
+                     **kwargs)
+
+    dim_in = self.input_shape[-1]
+    dim_out = self.output_shape[-1]
+    self.W = random.normal(key, shape=(dim_in, dim_out))
+    self.W = misc.whiten(self.W)
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (z, log_det)
+    """
+    if inverse == False:
+      assert x.shape == self.input_shape, 'Only works on unbatched data'
+    else:
+      assert x.shape == self.output_shape, 'Only works on unbatched data'
+
+    if inverse == False:
+      W_pinv = jnp.linalg.pinv(self.W)
+      z = jnp.einsum('ij,...j->...i', W_pinv, x)
+    else:
+      z = jnp.einsum('ij,...j->...i', self.W, x)
+
+    log_det = -0.5*jnp.linalg.slogdet(self.W.T@self.W)[1]
+
+    if inverse:
+      log_det *= -1
+
+    return z, log_det
+
+  def log_determinant(self,
+                      z: Array,
+                      **kwargs) -> Array:
+    """Compute -0.5*log(det(J^TJ))
+
+    **Arguments**:
+
+    - `z`: An element of the base space
+
+    **Returns**:
+    The log determinant of (J^TJ)^0.5
+    """
+    log_det = -0.5*jnp.linalg.slogdet(self.W.T@self.W)[1]
+    return log_det
 
 ################################################################################################################
 
@@ -513,12 +673,16 @@ if __name__ == '__main__':
   jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
-  x, y = random.normal(key, shape=(2, 10, 2, 2, 2))
+  # x, y = random.normal(key, shape=(2, 10, 2, 2, 2))
+  x, y = random.normal(key, shape=(2, 10, 5))
 
   # layer = ShiftScale(input_shape=x.shape[1:],
   #                    key=key)
-  layer = CaleyOrthogonalMVP(input_shape=x.shape[1:],
-                             key=key)
+  layer = TallDenseLinear(input_shape=x.shape[1:],
+                          output_shape=(2,),
+                          key=key)
+
+  x = eqx.filter_vmap(layer.project)(x)
   # layer = ConditionalOptionalTransport(input_shape=x.shape[1:],
   #                                      key=key)
 
@@ -531,8 +695,8 @@ if __name__ == '__main__':
   x_reconstr, log_det2 = layer(z, inverse=True)
 
   G = jax.jacobian(lambda x: layer(x)[0])(x[0])
-  G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
-  log_det_true = jnp.linalg.slogdet(G)[1]
+  # G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
+  log_det_true = 0.5*jnp.linalg.slogdet(G@G.T)[1]
 
   assert jnp.allclose(log_det, log_det_true)
   assert jnp.allclose(x[0], x_reconstr)

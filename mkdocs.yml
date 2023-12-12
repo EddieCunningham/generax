@@ -100,7 +100,7 @@ nav:
             - 'api/distributions/distributions.md'
             - 'api/distributions/coupling.md'
             - 'api/distributions/flow_models.md'
-        - BijectiveTransforms:
+        - Transformations:
             - api/flows/base.md
             - api/flows/affine.md
             - api/flows/conv.md
@@ -108,6 +108,7 @@ nav:
             - api/flows/ffjord.md
             - api/flows/nonlinearities.md
             - api/flows/compositions.md
+            - api/flows/reshape.md
         - NN:
             - api/nn/layers.md
             - api/nn/time_condition.md
