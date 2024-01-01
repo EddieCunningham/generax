@@ -501,6 +501,7 @@ class TimeDependentNormalizingFlow(ProbabilityPath, ABC):
 
     **Returns**:
     The vector field that samples evolve on at (t, x).
+    `return (xt, vt)`
     """
     def ft(t):
       return self.to_data_space(t, x0, y=y, **kwargs)
@@ -520,7 +521,7 @@ class TimeDependentNormalizingFlow(ProbabilityPath, ABC):
     - `y`: The (optional) conditioning information.
 
     **Returns**:
-    dxt/dt
+    `return vt`
     """
     x0 = self.to_base_space(t, xt, y=y, **kwargs)
-    return self.transform_and_vector_field(t, x0, y=y, **kwargs)
+    return self.transform_and_vector_field(t, x0, y=y, **kwargs)[1]

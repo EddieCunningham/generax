@@ -9,6 +9,13 @@
             - log_prob
             - score
 
+::: generax.distributions.base.BoltzmannDistribution
+    selection:
+        members:
+            - __init__
+            - energy
+            - score
+
 ::: generax.distributions.base.ProductDistribution
     selection:
         members:

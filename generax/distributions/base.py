@@ -10,10 +10,12 @@ import diffrax
 from jaxtyping import Array, PRNGKeyArray
 
 __all__ = ['ProbabilityDistribution',
+           'BoltzmannDistribution',
            'ProductDistribution',
            'ProbabilityPath',
            'EmpiricalDistribution',
-           'Gaussian']
+           'Gaussian',
+           'Logistic']
 
 class ProbabilityDistribution(eqx.Module, ABC):
   """An object that we can sample from and use to evaluate log probabilities.  This is an abstract base class.
@@ -27,6 +29,7 @@ class ProbabilityDistribution(eqx.Module, ABC):
   - `sample_and_log_prob(key) -> (x,log_px)`: Sample from the distribution and compute the log probability.
   - `sample(key) -> x`: Pull a single sample from the model
   - `log_prob(x) -> log_px`: Compute the log probability of a point under the model
+  - `score(x) -> dlog_px/dx`: Compute the gradient of the log probability of a point under the model
   """
 
   input_shape: int = eqx.field(static=True)
@@ -112,6 +115,68 @@ class ProbabilityDistribution(eqx.Module, ABC):
     The log likelihood of x under the model.
     """
     return eqx.filter_grad(self.log_prob)(x, y=y, key=key)
+
+  def energy(self,
+             x: Array,
+             y: Optional[Array] = None,
+             key: Optional[PRNGKeyArray] = None) -> Array:
+    return -self.log_prob(x, y=y, key=key)
+
+class BoltzmannDistribution(ProbabilityDistribution):
+  """An unnormalized probability density function.  p(x) = 1/Z*exp(-E(x))
+
+  **Atributes**:
+
+  - `input_shape`: The shape of samples.
+
+  **Methods**:
+
+  - `energy(x) -> E`: Compute the energy of a point under the model
+  - `score(x) -> grad log_px = -grad E`: Compute the gradient of the log probability of a point under the model
+  """
+  def sample_and_log_prob(self,
+                          key: PRNGKeyArray,
+                          y: Optional[Array] = None) -> Array:
+    raise AssertionError("Can't sample from a Boltzmann distribution")
+
+  def log_prob(self,
+               x: Array,
+               y: Optional[Array] = None,
+               key: Optional[PRNGKeyArray] = None) -> Array:
+    raise AssertionError("Can't compute log prob of a Boltzmann distribution")
+
+  @abstractmethod
+  def energy(self,
+             x: Array,
+             y: Optional[Array] = None,
+             key: Optional[PRNGKeyArray] = None) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute E(x) at.
+    - `y`: The (optional) conditioning information.
+    - `key`: The random number generator key.  Can be passed in the event
+             that we're getting a stochastic estimate of the energy.
+
+    **Returns**:
+    The energy of x under the model.
+    """
+    pass
+
+  def score(self,
+            x: Array,
+            y: Optional[Array] = None,
+            key: Optional[PRNGKeyArray] = None) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute grad logp(x) at.
+    - `y`: The (optional) conditioning information.
+    - `key`: The random number generator key.  Can be passed in the event
+             that we're getting a stochastic estimate of the log prob.
+
+    **Returns**:
+    The log likelihood of x under the model.
+    """
+    return -eqx.filter_grad(self.energy)(x, y=y, key=key)
 
 ################################################################################################################
 
@@ -213,6 +278,7 @@ class EmpiricalDistribution(ProbabilityDistribution):
 
     - `input_shape`: The dimensions of the samples
     """
+    self.data = data
     input_shape = data.shape[1:]
     super().__init__(input_shape=input_shape, **kwargs)
 
@@ -439,6 +505,50 @@ class Gaussian(ProbabilityDistribution):
     """
     assert x.shape == self.input_shape
     return jax.scipy.stats.norm.logpdf(x).sum()
+
+  def sample_and_log_prob(self,
+                          key: PRNGKeyArray,
+                          **kwargs) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    A single sample from the model with its log probability.
+    """
+    x = self.sample(key)
+    log_px = self.log_prob(x)
+    return x, log_px
+
+################################################################################################################
+
+class Logistic(ProbabilityDistribution):
+  """This represents a Logistic distribution"""
+
+  def sample(self,
+             key: PRNGKeyArray,
+             y: Optional[Array] = None) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    A single sample from the model.  Use eqx.filter_vmap to get more samples.
+    """
+    return random.logistic(key, shape=self.input_shape)
+
+  def log_prob(self,
+               x: Array,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute logp(x) at.
+
+    **Returns**:
+    The log likelihood of x under the model.
+    """
+    assert x.shape == self.input_shape
+    return jax.scipy.stats.logistic.logpdf(x).sum()
 
   def sample_and_log_prob(self,
                           key: PRNGKeyArray,

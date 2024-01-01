@@ -18,17 +18,15 @@ __all__ = ['Softplus',
            'SneakyReLU',
            'SquarePlus',
            'SquareSigmoid',
-           'SquareLogit',
            'SLog',
-          #  'CartesianToSpherical',
-          #  'SphericalToCartesian',
+           'CartesianToSpherical',
            ]
 
 class Softplus(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                **kwargs):
     """**Arguments**:
 
@@ -72,7 +70,7 @@ class GaussianCDF(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                **kwargs):
     """**Arguments**:
 
@@ -114,7 +112,7 @@ class LogisticCDF(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                **kwargs):
     """**Arguments**:
 
@@ -159,7 +157,7 @@ class LeakyReLU(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                alpha: Optional[float] = 0.01,
                **kwargs):
     """**Arguments**:
@@ -210,7 +208,7 @@ class SneakyReLU(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                alpha: Optional[float] = 0.01,
                **kwargs):
     """**Arguments**:
@@ -264,7 +262,7 @@ class SquarePlus(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                gamma: Optional[float] = 0.5,
                **kwargs):
     """**Arguments**:
@@ -317,7 +315,7 @@ class SquareSigmoid(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                gamma: Optional[float] = 0.5,
                **kwargs):
     """**Arguments**:
@@ -361,16 +359,6 @@ class SquareSigmoid(BijectiveTransform):
 
     return z, log_det
 
-class SquareLogit(SquareSigmoid):
-
-  def __call__(self,
-               x: Array,
-               y: Optional[Array] = None,
-               inverse: bool=False,
-               **kwargs) -> Array:
-    return super().__call__(x, y=y, inverse=not inverse, **kwargs)
-
-
 class SLog(BijectiveTransform):
   """ https://papers.nips.cc/paper/2019/file/b1f62fa99de9f27a048344d55c5ef7a6-Paper.pdf
   """
@@ -380,7 +368,7 @@ class SLog(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                alpha: Optional[float] = 0.0,
                **kwargs):
     """**Arguments**:
@@ -429,15 +417,13 @@ class CartesianToSpherical(BijectiveTransform):
   def __init__(self,
                input_shape: Tuple[int],
                *,
-               key: PRNGKeyArray,
+               key: PRNGKeyArray = None,
                **kwargs):
     """**Arguments**:
 
     - `input_shape`: The input shape.  Output size is the same as shape.
     - `key`: A `jax.random.PRNGKey` for initialization
     """
-    # TODO: Fix this
-    assert 0, 'Has bug'
     super().__init__(input_shape=input_shape,
                      **kwargs)
 
@@ -446,14 +432,14 @@ class CartesianToSpherical(BijectiveTransform):
     denominators = jnp.sqrt(jnp.cumsum(x[::-1]**2)[::-1])[:-1]
     cos_phi = x[:-1]/denominators
 
-    # cos_phi = jnp.maximum(-1.0 + eps, cos_phi)
-    # cos_phi = jnp.minimum(1.0 - eps, cos_phi)
+    cos_phi = jnp.maximum(-1.0 + eps, cos_phi)
+    cos_phi = jnp.minimum(1.0 - eps, cos_phi)
     phi = jnp.arccos(cos_phi)
 
     last_value = jnp.where(x[-1] >= 0, phi[-1], 2*jnp.pi - phi[-1])
     phi = phi.at[-1].set(last_value)
 
-    return jnp.concatenate([r, phi])
+    return jnp.concatenate([r[None], phi])
 
   def inverse_fun(self, x):
     r = x[:1]
@@ -479,45 +465,35 @@ class CartesianToSpherical(BijectiveTransform):
     """
     assert x.shape == self.input_shape, 'Only works on unbatched data'
 
-    @partial(jnp.vectorize, signature='(n)->(n),(),(k)')
-    def forward(x):
-      z = self.forward_fun(x)
-      r, phi = z[0], z[1:]
-      return z, r, phi
+    @partial(jnp.vectorize, signature='(n)->(n),()')
+    def unbatched_apply(x):
+      def _forward(x):
+        z = self.forward_fun(x)
+        r, phi = z[0], z[1:]
+        return z, r, phi
 
-    @partial(jnp.vectorize, signature='(n)->(n),(),(k)')
-    def inverse(x):
-      z = self.inverse_fun(x)
-      r, phi = x[0], x[1:]
-      return z, r, phi
+      def _inverse(x):
+        z = self.inverse_fun(x)
+        r, phi = x[0], x[1:]
+        return z, r, phi
 
-    if inverse == False:
-      z, r, phi = forward(x)
-      # z = self.forward_fun(x)
-      # r, phi = z[0], z[1:]
-    else:
-      z, r, phi = inverse(x)
-      # z = self.inverse_fun(x)
-      # r, phi = x[0], x[1:]
+      if inverse == False:
+        z, r, phi = _forward(x)
+      else:
+        z, r, phi = _inverse(x)
 
-    n = util.list_prod(self.input_shape)
-    n_range = jnp.arange(n - 2, -1, -1)
-    log_abs_sin_phi = jnp.log(jnp.abs(jnp.sin(phi)))
-    log_det = -(n - 1)*jnp.log(r) - jnp.sum(n_range*log_abs_sin_phi, axis=-1)
-    log_det = log_det.sum()
+      n = x.shape[-1]
+      n_range = jnp.arange(n - 2, -1, -1)
+      log_abs_sin_phi = jnp.log(jnp.abs(jnp.sin(phi)))
+      log_det = -(n - 1)*jnp.log(r) - jnp.sum(n_range*log_abs_sin_phi, axis=-1)
+      log_det = log_det.sum()
 
-    if inverse:
-      log_det = -log_det
-    return z, log_det
+      if inverse:
+        log_det = -log_det
+      return z, log_det
 
-class SphericalToCartesian(CartesianToSpherical):
-
-  def __call__(self,
-               x: Array,
-               y: Optional[Array] = None,
-               inverse: bool=False,
-               **kwargs) -> Array:
-    return super().__call__(x, y=y, inverse=not inverse, **kwargs)
+    z, log_det = unbatched_apply(x)
+    return z, log_det.sum()
 
 ################################################################################################################
 
@@ -530,24 +506,27 @@ if __name__ == '__main__':
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2, 2, 2))
+  # x = random.normal(key, shape=(1000, 3))
   x = jax.nn.sigmoid(x)
   x = jnp.clip(x, 1e-4, 1.0 - 1e-4)
 
-  layer = LogisticCDF(input_shape=x.shape[1:],
+  layer = CartesianToSpherical(input_shape=x.shape[1:],
                              key=key)
 
-  x = random.normal(key, shape=(2, 2, 2, 2))
+  # x = random.normal(key, shape=(2, 2, 2, 2))
   layer = layer.data_dependent_init(x, key=key)
 
   # layer = PLUAffine(x=x, key=key)
   z, log_det = eqx.filter_vmap(layer)(x)
+  z, log_det = layer(x[0])
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)
   assert jnp.allclose(log_det, -log_det2)
 
   G = jax.jacobian(lambda x: layer(x)[0])(x[0])
-  G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
+  if G.ndim > 3:
+    G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
   log_det_true = jnp.linalg.slogdet(G)[1]
 
   assert jnp.allclose(log_det, log_det_true)

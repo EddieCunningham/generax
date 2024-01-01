@@ -120,11 +120,11 @@ def get_knot_params(settings, theta):
   # Get the individual parameters
   tw, th, td = theta[...,:K], theta[...,K:2*K], theta[...,2*K:]
 
-  # Make the parameters fit the discription of knots
+  # Make the parameters fit the description of knots
   tw, th = jax.nn.softmax(tw, axis=-1), jax.nn.softmax(th, axis=-1)
   tw = min_width + (1.0 - min_width*K)*tw
   th = min_height + (1.0 - min_height*K)*th
-  td = min_derivative + misc.square_plus(td)
+  td = min_derivative + misc.square_plus(td, gamma=1.0)
   knot_x, knot_y = jnp.cumsum(tw, axis=-1), jnp.cumsum(th, axis=-1)
 
   # Pad the knots so that the first element is 0
@@ -171,7 +171,7 @@ class RationalQuadraticSpline(BijectiveTransform):
                K: int = 8,
                min_width: Optional[float] = 1e-3,
                min_height: Optional[float] = 1e-3,
-               min_derivative: Optional[float] = 1e-3,
+               min_derivative: Optional[float] = 1e-8,
                bounds: Sequence[float] = ((-10.0, 10.0), (-10.0, 10.0)),
                *,
                key: PRNGKeyArray,
@@ -249,11 +249,18 @@ if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
+  from generax.flows.coupling import RavelParameters
 
   key = random.PRNGKey(0)
   x = random.normal(key, shape=(10, 2))
 
-  layer = RationalQuadraticSpline(x=x, key=key)
+  layer = RationalQuadraticSpline(input_shape=x.shape[1:],
+                                  key=key)
+
+  params_to_transform = RavelParameters(layer)
+  flat_params = params_to_transform.flatten_params(layer)
+  layer = params_to_transform(flat_params*0.0)
+
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)

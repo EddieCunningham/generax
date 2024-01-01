@@ -180,7 +180,7 @@ class NeuralODE(eqx.Module):
                                    saveat=saveat,
                                    t0=t0,
                                    t1=t1,
-                                   dt0=0.0001,
+                                   dt0=0.001,
                                    y0=(x,
                                        log_det,
                                        total_vf_norm,

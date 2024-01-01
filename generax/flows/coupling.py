@@ -7,12 +7,14 @@ import einops
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray
 import generax.util.misc as misc
-from generax.flows.base import BijectiveTransform
+from generax.flows.base import BijectiveTransform, TimeDependentBijectiveTransform
 import numpy as np
 from generax.nn.resnet import ResNet
 
 __all__ = ['Coupling',
-           'RavelParameters']
+           'TimeDependentCoupling',
+           'RavelParameters',
+           'TimeDependentWrapper']
 
 class RavelParameters(eqx.Module):
   """Flatten and concatenate the parameters of a eqx.Module
@@ -43,6 +45,17 @@ class RavelParameters(eqx.Module):
 
     # Keep track of the split points for each paramter in the flattened array
     self.indices = np.cumsum(np.array([0] + [size for _, size in self.shapes_and_sizes]))
+
+  def flatten_params(self, module: eqx.Module) -> Array:
+    # Split the parameters into dynamic and static
+    params, _ = eqx.partition(module, eqx.is_array)
+
+    # Flatten the parameters so that we can extract its sizes
+    leaves, _ = jax.tree_util.tree_flatten(params)
+
+    # Flatten the parameters
+    flat_params = jnp.concatenate([leaf.ravel() for leaf in leaves])
+    return flat_params
 
   def __call__(self, flat_params: Array) -> eqx.Module:
     flat_params = flat_params.ravel() # Flatten the parameters completely
@@ -245,6 +258,125 @@ class Coupling(BijectiveTransform):
 
 ################################################################################################################
 
+class TimeDependentCoupling(Coupling, TimeDependentBijectiveTransform):
+  """Time dependent coupling transform.  At t=0, this will pass parameters of 0s
+  to the transform.
+  ```
+
+  **Attributes**:
+  - `params_to_transform`: A module that turns an array of parameters into an eqx.Module.
+  - `scale`: A scalar that we'll use to start with small parameter values
+  - `net`: The neural network to use.
+  """
+
+  def data_dependent_init(self,
+                          t: Array,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    """Initialize the parameters of the layer based on the data.
+
+    **Arguments**:
+
+    - `t`: The time to initialize the parameters with.
+    - `x`: The data to initialize the parameters with.
+    - `y`: The conditioning information
+    - `key`: A `jax.random.PRNGKey` for initialization
+
+    **Returns**:
+    A new layer with the parameters initialized.
+    """
+    assert x.shape[1:] == self.input_shape, 'Only works on batched data'
+    x1, x2 = self.split(x)
+    net = self.net.data_dependent_init(t, x2, y=y, key=key)
+
+    # Turn the new parameters into a new module
+    def get_net(tree): return tree.net
+    updated_layer = eqx.tree_at(get_net, self, net)
+    return updated_layer
+
+  def __call__(self,
+               t: Array,
+               xt: Array,
+               y: Optional[Array] = None,
+               inverse: bool=False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `xt`: The input to the transformation.  If inverse=True, then should be x0
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (x0, log_det)
+    """
+    assert xt.shape == self.input_shape, 'Only works on unbatched data'
+
+    # Split the input into two halves
+    x1, x2 = self.split(xt)
+    params = self.net(t, x2, y=y, **kwargs)
+    params *= self.scale*t
+    assert params.size == self.params_to_transform.flat_params_size
+
+    # Apply the transformation to x1 given x2
+    transform = self.params_to_transform(params)
+    z1, log_det = transform(x1, y=y, inverse=inverse, **kwargs)
+
+    z = self.combine(z1, x2)
+    return z, log_det
+
+################################################################################################################
+
+class TimeDependentWrapper(TimeDependentBijectiveTransform):
+  """Turn a bijective transform into a time dependent bijective transformation
+  where t is multiplied by the parameters.  If the transform is initialized correctly,
+  then when t=0, the transform should be equal to the identity transform.
+  """
+
+  transform: BijectiveTransform
+  params_to_transform: RavelParameters
+
+  def __init__(self, transform: BijectiveTransform):
+    super().__init__(input_shape=transform.input_shape,
+                     cond_shape=transform.cond_shape)
+    self.transform = transform
+    eqx.module_update_wrapper(self)
+
+    # Use this to turn an eqx module into an array and vice-versa
+    self.params_to_transform = RavelParameters(transform)
+
+  @property
+  def __wrapped__(self):
+    return self.transform
+
+  def __call__(self,
+               t: Array,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `t`: The time to evaluate at
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (z, log_det)
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+
+    # Flatten the parameters of the base transform and multiply by t
+    params, static = eqx.partition(self.transform, eqx.is_inexact_array)
+    leaves, _ = jax.tree_util.tree_flatten(params)
+    flat_params = jnp.concatenate([leaf.ravel() for leaf in leaves])
+    transform = self.params_to_transform(t*flat_params)
+
+    return transform(x, y=y, inverse=inverse, **kwargs)
+
+################################################################################################################
+
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
@@ -252,6 +384,7 @@ if __name__ == '__main__':
   from generax.flows.affine import DenseAffine, ShiftScale
   from generax.flows.reshape import Reverse
   from generax.distributions.base import Gaussian
+  import generax as gx
 
   # Turn on x64
   from jax.config import config
@@ -259,6 +392,7 @@ if __name__ == '__main__':
 
   key = random.PRNGKey(0)
   x, y = random.normal(key, shape=(2, 10, 5))
+  t = random.uniform(key, shape=(x.shape[0],))
   cond_shape = y.shape[1:]
   y, cond_shape = None, None
 
@@ -269,7 +403,7 @@ if __name__ == '__main__':
                       key=key)
 
   def initialize_network(net_input_shape, net_output_size, key):
-    return ResNet(input_shape=net_input_shape,
+    return gx.TimeDependentResNet(input_shape=net_input_shape,
                   working_size=4,
                   hidden_size=4,
                   out_size=net_output_size,
@@ -278,7 +412,7 @@ if __name__ == '__main__':
                   cond_shape=cond_shape,
                   key=key)
 
-  layer = Coupling(transform_init=initialize_scale,
+  layer = TimeDependentCoupling(transform_init=initialize_scale,
                    net_init=initialize_network,
                    input_shape=input_shape,
                    cond_shape=cond_shape,
@@ -286,15 +420,15 @@ if __name__ == '__main__':
                    reverse_conditioning=True,
                    split_dim=1)
 
-  layer(x[0])
-  layer = layer.data_dependent_init(x, y=y, key=key)
+  layer(t[0], x[0])
+  layer = layer.data_dependent_init(t, x, y=y, key=key)
 
-  z, log_det = eqx.filter_vmap(layer)(x)
+  z, log_det = eqx.filter_vmap(layer)(t, x)
 
-  z, log_det = layer(x[0])
-  x_reconstr, log_det2 = layer(z, inverse=True)
+  z, log_det = layer(t[0], x[0])
+  x_reconstr, log_det2 = layer(t[0], z, inverse=True)
 
-  G = jax.jacobian(lambda x: layer(x)[0])(x[0])
+  G = jax.jacobian(lambda x: layer(t[0], x)[0])(x[0])
   log_det_true = jnp.linalg.slogdet(G)[1]
 
   assert jnp.allclose(log_det, log_det_true)

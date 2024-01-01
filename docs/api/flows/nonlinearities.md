@@ -54,6 +54,12 @@
             - __init__
             - __call__
 
+::: generax.flows.spline.CartesianToSpherical
+    selection:
+        members:
+            - __init__
+            - __call__
+
 ::: generax.flows.logistic_cdf_mixture_logit.LogisticCDFMixtureLogit
     selection:
         members:
