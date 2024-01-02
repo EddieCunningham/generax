@@ -199,7 +199,7 @@ class CaleyOrthogonalConv(BijectiveTransform):
       z_fft = y_fft + jnp.einsum("abij,abj->abi", A_fft, y_fft)
       z = ifft_channel_vmap(z_fft).real
 
-    log_det = jnp.zeros(x.shape[:1])
+    log_det = jnp.array(0.0)
     return z, log_det
 
 ################################################################################################################
@@ -256,7 +256,6 @@ class OneByOneConv(BijectiveTransform):
       z = util.conv(w_inv[None,None,:,:], x)
 
     log_det = jnp.linalg.slogdet(self.w)[1]*H*W
-    log_det *= jnp.ones(x.shape[:1])
 
     if inverse:
       log_det = -log_det
@@ -386,7 +385,8 @@ if __name__ == '__main__':
   key = random.PRNGKey(0)
   # x = random.normal(key, (3, 8, 8, 2))
 
-  layer = HaarWavelet(input_shape=x.shape[1:])
+  layer = CaleyOrthogonalConv(input_shape=x.shape[1:], key=key)
+  # layer = HaarWavelet(input_shape=x.shape[1:])
 
   z, log_det = layer(x[0])
   x_reconstr, log_det2 = layer(z, inverse=True)
@@ -396,6 +396,7 @@ if __name__ == '__main__':
   log_det_true = jnp.linalg.slogdet(G)[1]
 
   assert jnp.allclose(log_det, log_det_true)
+  assert log_det.shape == ()
   assert jnp.allclose(x[0], x_reconstr)
 
 

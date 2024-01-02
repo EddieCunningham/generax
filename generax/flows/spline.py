@@ -250,9 +250,10 @@ if __name__ == '__main__':
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
   from generax.flows.coupling import RavelParameters
+  jax.config.update("jax_enable_x64", True)
 
   key = random.PRNGKey(0)
-  x = random.normal(key, shape=(10, 2))
+  x = random.normal(key, shape=(10, 8, 8, 2))
 
   layer = RationalQuadraticSpline(input_shape=x.shape[1:],
                                   key=key)
@@ -266,12 +267,14 @@ if __name__ == '__main__':
   x_reconstr, log_det2 = layer(z, inverse=True)
 
   G = jax.jacobian(lambda x: layer(x)[0])(x[0])
+  if x.ndim > 2:
+    G = einops.rearrange(G, 'h1 w1 c1 h2 w2 c2 -> (h1 w1 c1) (h2 w2 c2)')
   log_det_true = jnp.linalg.slogdet(G)[1]
 
   assert jnp.allclose(log_det, log_det_true)
+  assert log_det.shape == log_det_true.shape
   assert jnp.allclose(x[0], x_reconstr)
 
   z, log_det = eqx.filter_vmap(layer)(x)
 
-  import pdb
-  pdb.set_trace()
+  import pdb; pdb.set_trace()
