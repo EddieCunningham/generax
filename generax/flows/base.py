@@ -682,7 +682,24 @@ class Repeat(BijectiveTransform):
                           y: Optional[Array] = None,
                           key: PRNGKeyArray = None) -> BijectiveTransform:
     seq = self.to_sequential()
-    return seq.data_dependent_init(x, y=y, key=key)
+
+    # Apply the data dependent initalization
+    out_seq_layers = seq.data_dependent_init(x, y=y, key=key)
+
+    # Turn the sequential layers into a repeat layer
+    all_params = []
+    for i, layer in enumerate(out_seq_layers):
+      params, _ = eqx.partition(layer, eqx.is_array)
+      all_params.append(params)
+
+    # Combine the parameters back into a single layer
+    params = jax.tree_util.tree_map(lambda *args: jnp.array(args), *all_params)
+    _, static = eqx.partition(self.layers, eqx.is_array)
+    layers = eqx.combine(params, static)
+
+    get_layers = lambda tree: tree.layers
+    updated_module = eqx.tree_at(get_layers, self, layers)
+    return updated_module
 
   def __call__(self,
                x: Array,
@@ -705,7 +722,7 @@ class Repeat(BijectiveTransform):
       x, log_det = block(x, y=y, inverse=inverse, **kwargs)
       return x, log_det
 
-    x, log_dets = jax.lax.scan(scan_body, x, dynamic)
+    x, log_dets = jax.lax.scan(scan_body, x, dynamic, reverse=inverse)
     return x, log_dets.sum()
 
 ################################################################################################################
@@ -774,7 +791,6 @@ if __name__ == '__main__':
 
   layer = Sequential(layer1, layer2, layer3)
   layer_inv = layer.get_inverse()
-  import pdb; pdb.set_trace()
 
   def make_layer(key):
     return ShiftScale(input_shape=x.shape[1:], key=key)
@@ -784,6 +800,7 @@ if __name__ == '__main__':
   x = random.normal(key, shape=(10, 2, 2, 2))
   layer = layer.data_dependent_init(x, key=key)
   layer2 = layer2.data_dependent_init(x, key=key)
+  # import pdb; pdb.set_trace()
 
   # layer = PLUAffine(x=x, key=key)
   z, log_det = eqx.filter_vmap(layer)(x)
