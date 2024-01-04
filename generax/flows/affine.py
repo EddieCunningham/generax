@@ -178,7 +178,7 @@ class ShiftScale(BijectiveTransform):
     assert x.shape == self.input_shape, 'Only works on unbatched data'
 
     # s must be strictly positive
-    s = misc.square_plus(self.s_unbounded, gamma=1.0) + 1e-4
+    s = misc.square_plus(self.s_unbounded, gamma=1.0)# + 1e-4
     log_s = jnp.log(s)
 
     if inverse == False:

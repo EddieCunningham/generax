@@ -11,10 +11,47 @@ import generax.util.misc as misc
 from generax.flows.base import *
 import numpy as np
 
-__all__ = ['Reverse',
+__all__ = ['Flatten',
+           'Reverse',
            'Checkerboard',
            'Squeeze',
            'Slice']
+
+class Flatten(BijectiveTransform):
+  """Flatten
+  """
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `key`: A `jax.random.PRNGKey` for initialization
+    """
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+
+  def __call__(self,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    The transformed input and 0
+    """
+    log_det = jnp.array(0.0)
+    if inverse == False:
+      assert x.shape == self.input_shape
+      return x.ravel(), log_det
+    else:
+      return x.reshape(self.input_shape), log_det
 
 class Reverse(BijectiveTransform):
   """Reverse an input
@@ -58,12 +95,10 @@ class Checkerboard(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
-               key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 
     - `input_shape`: The input shape.  Output size is the same as shape.
-    - `key`: A `jax.random.PRNGKey` for initialization
     """
     H, W, C = input_shape
     assert W%2 == 0, 'Need even width'
@@ -102,7 +137,6 @@ class Squeeze(BijectiveTransform):
 
   def __init__(self,
                input_shape: Tuple[int],
-               key: PRNGKeyArray,
                **kwargs):
     """**Arguments**:
 

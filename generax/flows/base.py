@@ -17,6 +17,7 @@ __all__ = ['BijectiveTransform',
            'Sequential',
            'TimeDependentSequential',
            'Repeat',
+           'TimeDependentRepeat',
            'InjectiveSequential']
 
 class BijectiveTransform(eqx.Module, ABC):
@@ -152,6 +153,20 @@ class BijectiveTransform(eqx.Module, ABC):
       def __call__(self, x, y=None, inverse=False, **kwargs):
         return self.transform(x, y=y, inverse=not inverse, **kwargs)
 
+      def data_dependent_init(self,
+                              x: Array,
+                              y: Optional[Array] = None,
+                              key: PRNGKeyArray = None):
+        # Invert first
+        def apply_fun(x):
+          return self(x, y=y)[0]
+        z = eqx.filter_vmap(apply_fun)(x)
+
+        # Regular data dependent init
+        new_layer = self.transform.data_dependent_init(z, y=y, key=key)
+
+        return new_layer.get_inverse()
+
       @property
       def __wrapped__(self):
         return self.transform
@@ -279,7 +294,7 @@ class InjectiveTransform(BijectiveTransform, ABC):
       v = random.normal(key, shape=z.shape)
 
       operator = lx.FunctionLinearOperator(vjp_jvp, v, tags=lx.positive_semidefinite_tag)
-      solver = lx.CG(rtol=1e-6, atol=1e-6)
+      solver = lx.CG(rtol=1e-3, atol=1e-6)
       JTJinv_v = lx.linear_solve(operator, v, solver).value
       JTJ_v = vjp_jvp(v)
       return -0.5*jnp.vdot(jax.lax.stop_gradient(JTJinv_v), JTJ_v)
@@ -724,6 +739,108 @@ class Repeat(BijectiveTransform):
 
     x, log_dets = jax.lax.scan(scan_body, x, dynamic, reverse=inverse)
     return x, log_dets.sum()
+
+
+class TimeDependentRepeat(TimeDependentBijectiveTransform):
+  """A time dependent repeated bijective transformations that is vmapped together.  The input
+  to this function should be an initializer function for a transform.  For example:
+
+  ```python
+  def make_layer(key):
+    return ShiftScale(input_shape=x_shape, key=key)
+  layer = Repeat(make_layer, n_repeats=3, key=key)
+  ```
+
+  **Attributes**:
+  - `layers`: A vmapped layer in the composition
+  """
+
+  n_repeats: int = eqx.field(static=True)
+  layers: BijectiveTransform
+
+  def __init__(self,
+               layer_init: Callable[[PRNGKeyArray], BijectiveTransform],
+               n_repeats: int,
+               *,
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `layers`: A sequence of `BijectiveTransform`.
+    """
+    self.n_repeats = n_repeats
+    keys = random.split(key, n_repeats)
+    self.layers = eqx.filter_vmap(layer_init)(keys)
+
+    super().__init__(input_shape=self.layers.input_shape,
+                     cond_shape=self.layers.cond_shape,
+                     **kwargs)
+
+  def to_sequential(self) -> TimeDependentSequential:
+    """Convert this to a sequential composition.
+    """
+    params, static = eqx.partition(self.layers, eqx.is_array)
+
+    def make_layer(single_parameters: PyTree):
+      return eqx.combine(single_parameters, static)
+
+    layers = []
+    for i in range(self.n_repeats):
+      layer = make_layer(jax.tree_util.tree_map(lambda x: x[i], params))
+      layers.append(layer)
+
+    return TimeDependentSequential(*layers)
+
+  def data_dependent_init(self,
+                          t: Array,
+                          x: Array,
+                          y: Optional[Array] = None,
+                          key: PRNGKeyArray = None) -> BijectiveTransform:
+    seq = self.to_sequential()
+
+    # Apply the data dependent initalization
+    out_seq_layers = seq.data_dependent_init(t, x, y=y, key=key)
+
+    # Turn the sequential layers into a repeat layer
+    all_params = []
+    for i, layer in enumerate(out_seq_layers):
+      params, _ = eqx.partition(layer, eqx.is_array)
+      all_params.append(params)
+
+    # Combine the parameters back into a single layer
+    params = jax.tree_util.tree_map(lambda *args: jnp.array(args), *all_params)
+    _, static = eqx.partition(self.layers, eqx.is_array)
+    layers = eqx.combine(params, static)
+
+    get_layers = lambda tree: tree.layers
+    updated_module = eqx.tree_at(get_layers, self, layers)
+    return updated_module
+
+  def __call__(self,
+               t: Array,
+               x: Array,
+               y: Optional[Array] = None,
+               inverse: bool = False,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    (z, log_det)
+    """
+    dynamic, static = eqx.partition(self.layers, eqx.is_array)
+
+    def scan_body(x, params):
+      block = eqx.combine(params, static)
+      x, log_det = block(t, x, y=y, inverse=inverse, **kwargs)
+      return x, log_det
+
+    x, log_dets = jax.lax.scan(scan_body, x, dynamic, reverse=inverse)
+    return x, log_dets.sum()
+
 
 ################################################################################################################
 

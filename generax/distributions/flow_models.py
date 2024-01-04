@@ -14,6 +14,7 @@ from generax.flows.models import RealNVPTransform, NeuralSplineTransform
 from generax.flows.ffjord import FFJORDTransform
 
 __all__ = ['NormalizingFlow',
+           'RectangularFlow',
            'RealNVP',
            'NeuralSpline',
            'ContinuousNormalizingFlow',

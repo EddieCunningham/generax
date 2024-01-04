@@ -15,6 +15,7 @@ __all__ = ['ProbabilityDistribution',
            'ProbabilityPath',
            'EmpiricalDistribution',
            'Gaussian',
+           'Uniform',
            'Logistic']
 
 class ProbabilityDistribution(eqx.Module, ABC):
@@ -505,6 +506,50 @@ class Gaussian(ProbabilityDistribution):
     """
     assert x.shape == self.input_shape
     return jax.scipy.stats.norm.logpdf(x).sum()
+
+  def sample_and_log_prob(self,
+                          key: PRNGKeyArray,
+                          **kwargs) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    A single sample from the model with its log probability.
+    """
+    x = self.sample(key)
+    log_px = self.log_prob(x)
+    return x, log_px
+
+################################################################################################################
+
+class Uniform(ProbabilityDistribution):
+  """This represents a Uniform distribution between 0 and 1"""
+
+  def sample(self,
+             key: PRNGKeyArray,
+             y: Optional[Array] = None) -> Array:
+    """**Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    A single sample from the model.  Use eqx.filter_vmap to get more samples.
+    """
+    return random.uniform(key, shape=self.input_shape)
+
+  def log_prob(self,
+               x: Array,
+               **kwargs) -> Array:
+    """**Arguments**:
+
+    - `x`: The point we want to compute logp(x) at.
+
+    **Returns**:
+    The log likelihood of x under the model.
+    """
+    assert x.shape == self.input_shape
+    return jnp.array(0.0)
 
   def sample_and_log_prob(self,
                           key: PRNGKeyArray,

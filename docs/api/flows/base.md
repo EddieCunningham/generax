@@ -27,6 +27,16 @@
             - inverse
             - to_sequential
 
+::: generax.flows.base.TimeDependentRepeat
+    selection:
+        members:
+            - __init__
+            - __call__
+            - data_dependent_init
+            - inverse
+            - to_sequential
+            - vector_field
+
 ::: generax.flows.base.Sequential
     selection:
         members:

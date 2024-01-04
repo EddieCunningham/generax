@@ -11,13 +11,13 @@ import equinox as eqx
 
 def get_dataset_iter():
   from sklearn.datasets import make_moons, make_swiss_roll
-  data, y = make_moons(n_samples=100000, noise=0.01)
+  data, y = make_moons(n_samples=100000, noise=0.1)
   data = data - data.mean(axis=0)
   data = data/data.std(axis=0)
   key = random.PRNGKey(0)
 
   def get_train_ds(key: PRNGKeyArray,
-                  batch_size: int = 64) -> Iterator[Mapping[str, Array]]:
+                  batch_size: int = 512) -> Iterator[Mapping[str, Array]]:
     total_choices = jnp.arange(data.shape[0])
     closed_over_data = data # In case we change the variable "data"
     while True:
@@ -94,5 +94,6 @@ if __name__ == '__main__':
 
   fig, ax = plt.subplots(1, 1)
   ax.scatter(*samples.T)
-  plt.show()
+  plt.savefig('examples/spline_ml_samples.png')
+  # plt.show()
   import pdb; pdb.set_trace()
