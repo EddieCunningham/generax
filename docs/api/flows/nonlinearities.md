@@ -18,6 +18,12 @@
             - __init__
             - __call__
 
+::: generax.flows.nonlinearities.ScaledLogit
+    selection:
+        members:
+            - __init__
+            - __call__
+
 ::: generax.flows.nonlinearities.LeakyReLU
     selection:
         members:

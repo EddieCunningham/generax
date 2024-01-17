@@ -14,6 +14,7 @@ import generax.util as util
 __all__ = ['Softplus',
            'GaussianCDF',
            'LogisticCDF',
+           'ScaledLogit',
            'LeakyReLU',
            'SneakyReLU',
            'SquarePlus',
@@ -117,7 +118,6 @@ class LogisticCDF(BijectiveTransform):
     """**Arguments**:
 
     - `input_shape`: The input shape.  Output size is the same as shape.
-    - `key`: A `jax.random.PRNGKey` for initialization
     """
     super().__init__(input_shape=input_shape,
                      **kwargs)
@@ -139,12 +139,75 @@ class LogisticCDF(BijectiveTransform):
     assert x.shape == self.input_shape, 'Only works on unbatched data'
 
     if inverse == False:
-      z = jax.scipy.stats.logistic.cdf(x)
+      z = jax.scipy.stats.logistic.cdf(x) # Sigmoid
       log_det = jax.scipy.stats.logistic.logpdf(x).sum()
     else:
-      z = jax.scipy.stats.logistic.ppf(x)
+      z = jax.scipy.stats.logistic.ppf(x) # Logit
       log_det = jax.scipy.stats.logistic.logpdf(z).sum()
 
+    if inverse:
+      log_det = -log_det
+
+    return z, log_det
+
+class ScaledLogit(BijectiveTransform):
+  """Scaled version of the logit transform that takes as input [eps, 1 - eps] and outputs R.  Useful
+  for training flows on images.
+  """
+  scale: float = eqx.field(static=True)
+  has_scale: bool = eqx.field(static=True)
+  force_values: bool = eqx.field(static=True)
+
+  def __init__(self,
+               input_shape: Tuple[int],
+               scale: Optional[float]=0.05,
+               force_values: bool=False,
+               key: PRNGKeyArray = None,
+               **kwargs):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    """
+    super().__init__(input_shape=input_shape,
+                     **kwargs)
+    self.scale = scale
+    self.has_scale = scale is not None
+    self.force_values = force_values
+
+  def __call__(self,
+               x: Array,
+               inverse: bool = False,
+               force_values: bool = False,
+               **kwargs):
+    """**Arguments**:
+
+    - `x`: The input to the transformation
+    - `y`: The conditioning information
+    - `inverse`: Whether to inverse the transformation
+
+    **Returns**:
+    `(z, log_det)`
+    """
+    assert x.shape == self.input_shape, 'Only works on unbatched data'
+
+    if inverse == False:
+      if self.has_scale == True:
+        x *= (1.0 - 2*self.scale)
+        x += self.scale
+      z = jax.scipy.special.logit(x)
+      log_det = (jax.nn.softplus(z) + jax.nn.softplus(-z))
+    else:
+      z = jax.nn.sigmoid(x)
+      log_det = (jax.nn.softplus(x) + jax.nn.softplus(-x))
+
+      if self.has_scale == True and force_values == False and self.force_values == False:
+        z -= self.scale
+        z /= (1.0 - 2*self.scale)
+
+    if self.has_scale == True:
+      log_det += jnp.log(1.0 - 2*self.scale)
+
+    log_det = log_det.sum()
     if inverse:
       log_det = -log_det
 
@@ -510,8 +573,10 @@ if __name__ == '__main__':
   x = jax.nn.sigmoid(x)
   x = jnp.clip(x, 1e-4, 1.0 - 1e-4)
 
-  layer = CartesianToSpherical(input_shape=x.shape[1:],
-                             key=key)
+  layer = ScaledLogit(input_shape=x.shape[1:], scale=0.05)
+
+  # layer = CartesianToSpherical(input_shape=x.shape[1:],
+  #                            key=key)
 
   # x = random.normal(key, shape=(2, 2, 2, 2))
   layer = layer.data_dependent_init(x, key=key)
