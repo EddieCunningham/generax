@@ -33,6 +33,7 @@ class ResNet(eqx.Module):
                out_size: int,
                n_blocks: int,
                filter_shape: Optional[Tuple[int]] = (3, 3),
+               groups: int = None,
                cond_shape: Optional[Tuple[int]] = None,
                activation: Callable = jax.nn.swish,
                *,
@@ -46,6 +47,8 @@ class ResNet(eqx.Module):
     - `out_size`: The output size.  For images, this is the number of output
                   channels.
     - `n_blocks`: The number of residual blocks.
+    - `filter_shape`: The filter shape for the convolutional layers.
+    - `groups`: The number of groups for group norm.
     - `cond_shape`: The size of the conditioning information.
     - `activation`: The activation function in each residual block.
     - `key`: A `jax.random.PRNGKey` for initialization.
@@ -86,10 +89,12 @@ class ResNet(eqx.Module):
                                         groups=1,
                                         key=k1)
       working_shape = (H, W, working_size)
+      groups = 1 if groups is None else groups
 
     def make_resblock(k):
       return GatedResBlock(input_shape=working_shape,
                           hidden_size=hidden_size,
+                          groups=groups,
                           cond_shape=cond_shape,
                           activation=activation,
                           filter_shape=filter_shape,

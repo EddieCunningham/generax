@@ -3,12 +3,13 @@ import jax.numpy as jnp
 import jax
 import jax.random as random
 from functools import partial
-from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable, Dict, Iterator
+from typing import Optional, Mapping, Tuple, List, Sequence, Union, Any, Callable, Dict, Iterator
 import optax
 import equinox as eqx
-from jaxtyping import Array, PRNGKeyArray
+from jaxtyping import Array, PRNGKeyArray, PyTree
 import tqdm
-import generax.util.misc as misc
+import jax.tree_util as jtu
+import generax.util as util
 import os
 
 __all__ = ['TrainingState',
@@ -44,7 +45,10 @@ class Checkpointer(eqx.Module):
                save_path: str):
     self.save_path = save_path
     self.model_folder = os.path.join(save_path, 'models')
-    misc.ensure_path_exists(self.model_folder)
+    util.ensure_path_exists(self.model_folder)
+
+  def model_exists(self) -> bool:
+    return os.path.exists(self.saved_model_path)
 
   @property
   def saved_model_path(self):
@@ -60,6 +64,72 @@ class Checkpointer(eqx.Module):
 
 ################################################################################################################
 
+class AuxiliaryTracker():
+  """This class is used to track auxiliary information during training.  It is
+  used by the `Trainer` class to keep track of auxiliary information during
+  training.  This is useful for things like tracking the training loss, which
+  is not part of the model itself.
+  """
+  history: Dict[str,Array]
+  save_path: str
+
+  def __init__(self,
+               save_path: str):
+    self.history = None
+    self.save_path = save_path
+
+  @property
+  def aux_folder(self):
+    aux_folder = os.path.join(self.save_path, 'aux')
+    util.ensure_path_exists(aux_folder)
+    return aux_folder
+
+  @property
+  def aux_history_path(self):
+    return os.path.join(self.aux_folder, 'aux_history.csv')
+
+  @property
+  def aux_plots_folder(self):
+    plots_folder = os.path.join(self.aux_folder, 'plots')
+    util.ensure_path_exists(plots_folder)
+    return plots_folder
+
+  def update(self, aux: Dict[str,Array], double_batched: bool = False):
+    # Concatenate the new aux to the history
+    if self.history is None:
+      self.history = aux
+    else:
+      if double_batched:
+        self.history = util.tree_concat(self.history, aux)
+      else:
+        self.history = jtu.tree_map(jnp.append, self.history, aux)
+
+  def checkpoint(self):
+    util.dict_to_csv(self.history, self.aux_history_path)
+
+  def restore(self):
+    self.history = util.csv_to_dict(self.aux_history_path)
+
+  def create_plots(self):
+    import matplotlib.pyplot as plt
+
+    # Create plots of the aux history
+    for key, val in self.history.items():
+      assert isinstance(val, jnp.ndarray)
+      assert val.ndim == 1
+      T = val.shape[0]
+      title = f'{key} vs. training step'
+      save_path = os.path.join(self.aux_plots_folder, f'{key}_{T}.png')
+      fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+      ax.plot(val)
+      ax.set_title(title)
+      ax.set_xlabel('Training step')
+      ax.set_ylabel(key)
+      fig.savefig(save_path)
+      plt.close(fig)
+
+################################################################################################################
+
 class Trainer(eqx.Module):
   """Class that will monitor training and handle checkpointing.
 
@@ -69,17 +139,13 @@ class Trainer(eqx.Module):
   """
 
   checkpointer: Checkpointer
-  _aux_history: list
+  aux_history: AuxiliaryTracker
 
   def __init__(self,
                checkpoint_path: str):
 
     self.checkpointer = Checkpointer(checkpoint_path)
-    self._aux_history = []
-
-  @property
-  def aux_history(self):
-    return jax.tree_util.tree_map(lambda *xs: jnp.array(xs), *self._aux_history)
+    self.aux_history = AuxiliaryTracker(checkpoint_path)
 
   def train_step(self,
                  objective: Callable,
@@ -92,6 +158,9 @@ class Trainer(eqx.Module):
     # Compute the gradients of the objective
     (obj, aux), grads = eqx.filter_value_and_grad(objective, has_aux=True)(model, data, train_key)
     aux['objective'] = obj
+
+    # We need aux to contain scalars in order to write it correctly.
+    aux = jtu.tree_map(jnp.mean, aux)
 
     # Update the model
     updates, new_opt_state = optimizer.update(grads, opt_state, model)
@@ -141,6 +210,10 @@ class Trainer(eqx.Module):
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
     train_state = TrainingState(jnp.array(0.0), key0, model, opt_state)
 
+    if retrain == False:
+      if self.checkpointer.model_exists() == False:
+        retrain = True
+
     # Load the most recent checkpoint
     if retrain == False:
       train_state = self.restore(train_state)
@@ -172,9 +245,13 @@ class Trainer(eqx.Module):
     # Construct the progress bar
     start = int(train_state.i) if retrain == False else 0
     if double_batch <= 0:
-      pbar = tqdm.tqdm(jnp.arange(start, num_steps), total=num_steps - start)
+      pbar = tqdm.tqdm(jnp.arange(start, num_steps),
+                       initial=start,
+                       total=num_steps - start)
     else:
-      pbar = tqdm.tqdm(jnp.arange(start, num_steps, double_batch), total=num_steps - start)
+      pbar = tqdm.tqdm(jnp.arange(start, num_steps, double_batch),
+                       initial=start,
+                       total=num_steps - start)
 
     # Training loop
     for i in pbar:
@@ -184,13 +261,14 @@ class Trainer(eqx.Module):
         data = next(data_iterator)
         train_state, aux = train_step(train_state, data)
         pbar.update(1)
+        self.aux_history.update(aux)
       else:
-        data = misc.extract_multiple_batches_from_iterator(data_iterator, double_batch)
+        data = util.extract_multiple_batches_from_iterator(data_iterator, double_batch)
         params, static = eqx.partition(train_state, eqx.is_array)
         params, aux = scan_step(params, data)
         train_state = eqx.combine(params, static)
         pbar.update(double_batch)
-      self._aux_history.append(aux)
+        self.aux_history.update(aux, double_batched=True)
 
       # Update the progress bar
       description = ', '.join([f'{k}={float(v.mean()):.4f}' for k, v in aux.items()])
@@ -211,11 +289,20 @@ class Trainer(eqx.Module):
     return train_state.model
 
   def checkpoint(self, train_state: TrainingState):
+    # Save off the model
     self.checkpointer.save_eqx_module(train_state)
 
+    # Save off the auxiliary history
+    self.aux_history.checkpoint()
+    self.aux_history.create_plots()
+
   def restore(self, train_state: TrainingState) -> TrainingState:
+    # Load the model
     train_state = self.checkpointer.load_eqx_module(train_state)
     print(f'Restored train_state {self.checkpointer.saved_model_path}')
+
+    # Load the auxiliary history
+    self.aux_history.restore()
     return train_state
 
 ################################################################################################################
@@ -224,7 +311,8 @@ def default_optimizer(lr=1e-3,
                       clip_norm=15.0,
                       warmup=1000,
                       decay_steps=3e5,
-                      end_value=0.1) -> optax.GradientTransformation:
+                      end_value=0.1,
+                      cosine_exponent=1.0) -> optax.GradientTransformation:
   """
   Gradient clipping, AdamW, and cosine decay with warmup.
   """
@@ -233,7 +321,7 @@ def default_optimizer(lr=1e-3,
                                                 warmup_steps=warmup,
                                                 decay_steps=decay_steps,
                                                 end_value=end_value,
-                                                exponent=1.0)
+                                                exponent=cosine_exponent)
   chain = []
   chain.append(optax.clip_by_global_norm(clip_norm))
   chain.append(optax.adamw(lr))

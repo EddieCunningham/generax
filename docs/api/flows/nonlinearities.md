@@ -42,19 +42,13 @@
             - __init__
             - __call__
 
-::: generax.flows.nonlinearities.SquareLogit
-    selection:
-        members:
-            - __init__
-            - __call__
-
 ::: generax.flows.nonlinearities.SLog
     selection:
         members:
             - __init__
             - __call__
 
-::: generax.flows.spline.CartesianToSpherical
+::: generax.flows.nonlinearities.CartesianToSpherical
     selection:
         members:
             - __init__

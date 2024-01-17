@@ -248,8 +248,8 @@ class InjectiveTransform(BijectiveTransform, ABC):
     J = jax.vmap(jvp, in_axes=1, out_axes=1)(eye)
     return -0.5*jnp.linalg.slogdet(J.T@J)[1]
 
-  def log_determinant_surrogate(z: Array,
-                                transform: eqx.Module,
+  def log_determinant_surrogate(self,
+                                z: Array,
                                 method: str = 'brute_force',
                                 key: PRNGKeyArray = None,
                                 **kwargs) -> Array:
@@ -272,7 +272,7 @@ class InjectiveTransform(BijectiveTransform, ABC):
 
     def jvp(v_flat):
       v = v_flat.reshape(z.shape)
-      _, (Jv) = jax.jvp(transform, (z,), (v,))
+      _, (Jv) = jax.jvp(self.to_data_space, (z,), (v,))
       return Jv.ravel()
 
     if method == 'brute_force':
@@ -284,7 +284,7 @@ class InjectiveTransform(BijectiveTransform, ABC):
     elif method == 'iterative':
 
       def vjp(v_flat):
-        x, vjp = jax.vjp(transform, z)
+        x, vjp = jax.vjp(self.to_data_space, z)
         v = v_flat.reshape(x.shape)
         return vjp(v)[0].ravel()
 
@@ -737,7 +737,10 @@ class Repeat(BijectiveTransform):
       x, log_det = block(x, y=y, inverse=inverse, **kwargs)
       return x, log_det
 
-    x, log_dets = jax.lax.scan(scan_body, x, dynamic, reverse=inverse)
+    if inverse:
+      dynamic = jax.tree_util.tree_map(lambda x: x[::-1], dynamic)
+
+    x, log_dets = eqx.internal.scan(scan_body, x, dynamic, kind='lax')
     return x, log_dets.sum()
 
 

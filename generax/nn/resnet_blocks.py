@@ -54,6 +54,8 @@ class GatedResBlock(eqx.Module):
       H, W, C = input_shape
       image = True
       assert filter_shape is not None, 'Must pass in filter shape when processing images'
+      if groups is None:
+        groups = 8
 
     self.input_shape = input_shape
     self.hidden_size = hidden_size

@@ -159,6 +159,8 @@ class RectangularFlow(NormalizingFlow):
     - `prior`: The prior distribution
     """
     assert isinstance(transform, InjectiveTransform)
+    if prior.input_shape != transform.output_shape:
+      raise ValueError(f"The prior input shape {prior.input_shape} does not match the transform output shape {transform.output_shape}")
     self.output_shape = transform.output_shape
     super().__init__(transform=transform,
                      prior=prior,
@@ -179,6 +181,28 @@ class RectangularFlow(NormalizingFlow):
     z
     """
     return self.transform.project(x, y=y, **kwargs)
+
+  def sample(self,
+             key: PRNGKeyArray,
+             y: Optional[Array] = None,
+             **kwargs) -> Array:
+    """
+    **Arguments**:
+
+    - `key`: The random number generator key.
+
+    **Returns**:
+    Samples from the model
+
+    Use eqx.filter_vmap to get more samples!  For example,
+    ```python
+    keys = random.split(key, n_samples)
+    samples = eqx.filter_vmap(self.sample)(keys)
+    ```
+    """
+    z = self.prior.sample(key)
+    x, _ = self.transform(z, y=y, inverse=True, **kwargs)
+    return x
 
   def sample_and_log_prob(self,
                           key: PRNGKeyArray,

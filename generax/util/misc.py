@@ -14,6 +14,9 @@ __all__ = ['broadcast_to_first_axis',
            'get_reduce_axes',
            'index_list',
            'tree_shapes',
+           'tree_concat',
+           'tree_hstack',
+           'tree_array',
            'square_plus',
            'square_sigmoid',
            'square_swish',
@@ -64,6 +67,21 @@ def index_list(shape, axis):
 
 def tree_shapes(pytree):
   return jax.tree_util.tree_map(lambda x: x.shape, pytree)
+
+def tree_concat(x, y, axis=0):
+  if x is None:
+    return y
+  return jax.tree_util.tree_map(lambda a, b: jnp.concatenate([a, b], axis=axis), x, y)
+
+def tree_hstack(x, y):
+  if x is None:
+    return jax.tree_util.tree_map(lambda x: x[None], y)
+  return jax.tree_util.tree_map(lambda a, b: jnp.hstack([a, b]), x, y)
+
+def tree_array(inputs):
+  return jax.tree_util.tree_map(lambda *xs: jnp.array(xs), *inputs)
+
+################################################################################################################
 
 def square_plus(x, gamma=0.5):
   # https://arxiv.org/pdf/1901.08431.pdf
