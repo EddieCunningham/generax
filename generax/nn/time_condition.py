@@ -43,6 +43,7 @@ class GaussianFourierProjection(eqx.Module):
 
     A JAX array with shape `(2*embedding_size,)`.
     """
+    t = jnp.array(t)
     assert t.shape == ()
     t = jnp.expand_dims(t, axis=-1)
     t_proj = self.W(t*2*jnp.pi)
@@ -92,6 +93,7 @@ class TimeFeatures(eqx.Module):
 
     A JAX array with shape `(out_features,)`.
     """
+    t = jnp.array(t)
     assert t.shape == ()
     x = self.projection(t)
     x = self.W1(x)

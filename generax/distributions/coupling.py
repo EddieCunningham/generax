@@ -54,6 +54,18 @@ class JointCoupling(eqx.Module, ABC):
     idx = jax.random.categorical(rng_key, self.logits, axis=0)
     return self.x0[idx]
 
+  def sample_x1_given_x0(self, rng_key: PRNGKeyArray) -> Array:
+    """Resample from the coupling
+
+    **Arguments**:
+      - rng_key: The random number generator key
+
+    **Returns**:
+      A sample from q(x_1|x_0)
+    """
+    idx = jax.random.categorical(rng_key, self.logits, axis=1)
+    return self.x1[idx]
+
 class UniformCoupling(JointCoupling):
   """This is a uniform coupling between two distributions"""
 

@@ -95,14 +95,20 @@ class AuxiliaryTracker():
     return plots_folder
 
   def update(self, aux: Dict[str,Array], double_batched: bool = False):
+
+    def to_list(x):
+      if double_batched:
+        return x.tolist()
+      return [float(x)]
+
+    aux_list = jtu.tree_map(to_list, aux)
+
     # Concatenate the new aux to the history
     if self.history is None:
-      self.history = aux
+      self.history = aux_list
     else:
-      if double_batched:
-        self.history = util.tree_concat(self.history, aux)
-      else:
-        self.history = jtu.tree_map(jnp.append, self.history, aux)
+      for key in self.history.keys():
+        self.history[key] += aux_list[key]
 
   def checkpoint(self):
     util.dict_to_csv(self.history, self.aux_history_path)
@@ -114,17 +120,57 @@ class AuxiliaryTracker():
     import matplotlib.pyplot as plt
 
     # Create plots of the aux history
-    for key, val in self.history.items():
-      assert isinstance(val, jnp.ndarray)
+    for key, val_list in self.history.items():
+      assert isinstance(val_list, list)
+      val = jnp.array(val_list)
       assert val.ndim == 1
       T = val.shape[0]
+
+      # Simple moving average of val
+      window_size = 1000
+      cumsum = jnp.cumsum(jnp.pad(val, (window_size, 0), constant_values=val[0]))
+      sma = (cumsum[window_size:] - cumsum[:-window_size])/window_size
+
       title = f'{key} vs. training step'
-      save_path = os.path.join(self.aux_plots_folder, f'{key}_{T}.png')
-      fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-      ax.plot(val)
-      ax.set_title(title)
-      ax.set_xlabel('Training step')
-      ax.set_ylabel(key)
+      save_path = os.path.join(self.aux_plots_folder, f'{key}.png')
+
+      # Save off a few different kinds of plots
+      n_rows, n_cols = 2, 2
+      size = 4
+      fig, axes = plt.subplots(n_rows, n_cols, figsize=(size*n_cols, size*n_rows))
+
+      # First plot is the entire plot
+      axes[0,0].plot(val, color='blue')
+      axes[0,0].plot(sma, color='red')
+      axes[0,0].set_title(title)
+      axes[0,0].set_xlabel('Training step')
+      axes[0,0].set_ylabel(key)
+
+      # Second one is log scale
+      axes[0,1].plot(val, color='blue')
+      axes[0,1].plot(sma, color='red')
+      axes[0,1].set_title(title)
+      axes[0,1].set_xlabel('Training step')
+      axes[0,1].set_ylabel(key)
+      axes[0,1].set_yscale('log')
+
+      # Third one is the N most recent steps
+      N = 5000
+      t = jnp.arange(max(0,T-N), T)
+      axes[1,0].plot(t, val[-N:], color='blue')
+      axes[1,0].plot(t, sma[-N:], color='red')
+      axes[1,0].set_title(title)
+      axes[1,0].set_xlabel('Training step')
+      axes[1,0].set_ylabel(key)
+
+      # Fourth one is the N most recent steps in log scale
+      axes[1,1].plot(t, val[-N:], color='blue')
+      axes[1,1].plot(t, sma[-N:], color='red')
+      axes[1,1].set_title(title)
+      axes[1,1].set_xlabel('Training step')
+      axes[1,1].set_ylabel(key)
+      axes[1,1].set_yscale('log')
+
       fig.savefig(save_path)
       plt.close(fig)
 
@@ -151,13 +197,31 @@ class Trainer(eqx.Module):
                  objective: Callable,
                  optimizer: optax.GradientTransformation,
                  train_state: TrainingState,
-                 data: Dict[str,Array]) -> Tuple[TrainingState, Mapping[str, Any]]:
+                 data: Dict[str,Array],
+                 grad_scan_batch_size: Optional[int] = None) -> Tuple[TrainingState, Mapping[str, Any]]:
     i, model, opt_state = train_state.i, train_state.model, train_state.opt_state
     train_key, next_key = random.split(train_state.key)
 
-    # Compute the gradients of the objective
-    (obj, aux), grads = eqx.filter_value_and_grad(objective, has_aux=True)(model, data, train_key)
+    if grad_scan_batch_size:
+
+      # Accumulate the gradients over multiple batches of data
+      def get_grads(data):
+        return eqx.filter_value_and_grad(objective, has_aux=True)(model, data, train_key)
+
+      out = jax.lax.map(get_grads, data)
+      (obj, aux), grads = jtu.tree_map(lambda x: jnp.mean(x, axis=0), out)
+    else:
+
+      # Compute the gradients of the objective
+      (obj, aux), grads = eqx.filter_value_and_grad(objective, has_aux=True)(model, data, train_key)
+
     aux['objective'] = obj
+
+    # Get the norm of the gradient
+    # grad_sq_norms = jtu.tree_map(jnp.mean, grads)
+    grad_sq_norms = jtu.tree_map(lambda x: jnp.mean(x**2), grads)
+    grad_sq_norms_list = jtu.tree_flatten(grad_sq_norms)[0]
+    aux['grad_norm'] = sum(grad_sq_norms_list)/len(grad_sq_norms_list)
 
     # We need aux to contain scalars in order to write it correctly.
     aux = jtu.tree_map(jnp.mean, aux)
@@ -184,7 +248,9 @@ class Trainer(eqx.Module):
             checkpoint_every: int = 1000,
             test_every: int = 1000,
             retrain: bool = False,
-            just_load: bool = False):
+            just_load: bool = False,
+            stop_when: Optional[Callable[[Dict[str,Array]], bool]] = None,
+            grad_scan_batch_size: Optional[int] = None):
     """Train the model.  This will load the model if the most
     recent checkpoint exists has completed training.
 
@@ -206,6 +272,9 @@ class Trainer(eqx.Module):
     """
     key0 = random.PRNGKey(0)
 
+    if grad_scan_batch_size is not None:
+      assert double_batch == -1, 'Does not support double_batch with grad_scan_batch_size'
+
     # Load the most recent checkpoint
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
     train_state = TrainingState(jnp.array(0.0), key0, model, opt_state)
@@ -222,7 +291,7 @@ class Trainer(eqx.Module):
       return train_state.model
 
     # Fill in the training step with the objective and optimizer
-    train_step = eqx.Partial(self.train_step, objective, optimizer)
+    train_step = eqx.Partial(self.train_step, objective, optimizer, grad_scan_batch_size=grad_scan_batch_size)
 
     if double_batch == -1:
       # JIT the training update here
@@ -258,7 +327,10 @@ class Trainer(eqx.Module):
 
       # Take a training step
       if double_batch == -1:
-        data = next(data_iterator)
+        if grad_scan_batch_size is not None:
+          data = util.extract_multiple_batches_from_iterator(data_iterator, grad_scan_batch_size)
+        else:
+          data = next(data_iterator)
         train_state, aux = train_step(train_state, data)
         pbar.update(1)
         self.aux_history.update(aux)
@@ -282,6 +354,12 @@ class Trainer(eqx.Module):
       # Evaluate the model
       if (i%test_every == 0) or (i == num_steps - 1):
         evaluate_model(train_state.model)
+
+      # Stopping condition
+      if stop_when is not None:
+        if stop_when(i, aux):
+          print('Stopping training because of condition')
+          break
 
     # Final checkpoint
     self.checkpoint(train_state)
@@ -312,7 +390,10 @@ def default_optimizer(lr=1e-3,
                       warmup=1000,
                       decay_steps=3e5,
                       end_value=0.1,
-                      cosine_exponent=1.0) -> optax.GradientTransformation:
+                      cosine_exponent=1.0,
+                      weight_decay_hyper=10.0,
+                      dataset_size=None,
+                      batch_size=None) -> optax.GradientTransformation:
   """
   Gradient clipping, AdamW, and cosine decay with warmup.
   """
@@ -324,7 +405,66 @@ def default_optimizer(lr=1e-3,
                                                 exponent=cosine_exponent)
   chain = []
   chain.append(optax.clip_by_global_norm(clip_norm))
-  chain.append(optax.adamw(lr))
+
+  # https://arxiv.org/pdf/2405.13698v1
+  if dataset_size is not None:
+    weight_decay = weight_decay_hyper/(lr*dataset_size/batch_size)
+  else:
+    weight_decay = 0.0001
+
+  chain.append(optax.adamw(lr, weight_decay=weight_decay))
   chain.append(optax.scale_by_schedule(schedule))
   optimizer = optax.chain(*chain)
   return optimizer
+
+################################################################################################################
+
+if __name__ == '__main__':
+  from debug import *
+  import matplotlib.pyplot as plt
+  import generax as gx
+  import generax.util as util
+
+  key = random.PRNGKey(0)
+
+  # Get the dataset
+  from sklearn.datasets import make_moons, make_swiss_roll
+  data, y = make_moons(n_samples=100000, noise=0.1)
+  data = data - data.mean(axis=0)
+  data = data/data.std(axis=0)
+  p1 = gx.EmpiricalDistribution(data)
+  train_ds = p1.train_iterator(key, batch_size=64)
+  x = next(train_ds)['x']
+  x_shape = x.shape[1:]
+
+  # Construct the flow
+  flow = gx.NeuralSpline(input_shape=x_shape,
+                          key=key,
+                          n_flow_layers=2,
+                          n_blocks=1,
+                          hidden_size=4,
+                          working_size=2,
+                          n_spline_knots=2)
+
+  # Construct the loss function
+  def loss(flow, data, key):
+    x = data['x']
+    log_px = eqx.filter_vmap(flow.log_prob)(x)
+    objective = -log_px.mean()
+
+    aux = dict(log_px=log_px)
+    return objective, aux
+
+  # Create the trainer and optimize
+  trainer = Trainer(checkpoint_path='tmp/trainer_test')
+  flow = trainer.train(model=flow,
+                       objective=loss,
+                       evaluate_model=lambda x: x,
+                       optimizer=default_optimizer(lr=1e-3),
+                       num_steps=100,
+                       double_batch=10,
+                       data_iterator=train_ds,
+                       checkpoint_every=20,
+                       test_every=-1,
+                       retrain=True,
+                       just_load=False)

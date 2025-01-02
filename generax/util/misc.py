@@ -8,8 +8,10 @@ import jax.lax as lax
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray, PyTree
 import einops
+import jax.tree_util as jtu
 
-__all__ = ['broadcast_to_first_axis',
+__all__ = ['negate_module_gradients',
+           'broadcast_to_first_axis',
            'last_axes',
            'get_reduce_axes',
            'index_list',
@@ -30,6 +32,25 @@ __all__ = ['broadcast_to_first_axis',
            'conv',
            'unbatch',
            'count_params']
+
+################################################################################################################
+
+def negate(pytree):
+  return jtu.tree_map(lambda x: -x, pytree)
+
+@eqx.filter_custom_vjp
+def negate_module_gradients(module):
+  return module
+
+@negate_module_gradients.def_fwd
+def fn_fwd(perturbed, module):
+  return module, ()
+
+@negate_module_gradients.def_bwd
+def fn_bwd(residuals, grad_obj, perturbed, module):
+  del residuals, perturbed, module
+  return negate(grad_obj)
+
 
 ################################################################################################################
 

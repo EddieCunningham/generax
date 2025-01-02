@@ -54,6 +54,7 @@ class UNet(eqx.Module):
   freeu: bool = eqx.field(static=True)
   time_dependent: bool = eqx.field(static=True)
   cond_shape: Optional[Tuple[int]] = eqx.field(static=True)
+  time_shape: Optional[Tuple[int]] = eqx.field(static=True)
 
   def __init__(self,
                input_shape: Tuple[int],
@@ -104,25 +105,25 @@ class UNet(eqx.Module):
       self.time_features = TimeFeatures(embedding_size=self.dim,
                                         out_features=4*self.dim,
                                         key=next(key_iter))
-      time_shape = (4*self.dim,)
+      self.time_shape = (4*self.dim,)
     else:
       self.time_features = None
-      time_shape = None
+      self.time_shape = None
 
     self.cond_shape = cond_shape
     if cond_shape is not None:
       assert len(cond_shape) == 1
-      if time_shape:
-        time_shape = (time_shape[0] + cond_shape[0],)
+      if self.time_shape:
+        self.time_shape = (self.time_shape[0] + cond_shape[0],)
       else:
-        time_shape = cond_shape
+        self.time_shape = cond_shape
 
     def make_resblock(key, input_shape, dim_out):
       return ImageResBlock(input_shape=input_shape,
                            hidden_size=dim_out,
                            out_size=dim_out,
                            groups=resnet_block_groups,
-                           cond_shape=time_shape,
+                           cond_shape=self.time_shape,
                            key=key)
 
     def make_attention(key, input_shape, linear=True):
@@ -397,23 +398,6 @@ class Encoder(eqx.Module):
                                    padding=0,
                                    key=next(key_iter))
 
-  def data_dependent_init(self,
-                          x: Array,
-                          y: Optional[Array] = None,
-                          key: PRNGKeyArray = None) -> eqx.Module:
-    """Initialize the parameters of the layer based on the data.
-
-    **Arguments**:
-
-    - `x`: The data to initialize the parameters with.
-    - `y`: The conditioning information
-    - `key`: A `jax.random.PRNGKey` for initialization
-
-    **Returns**:
-    A new layer with the parameters initialized.
-    """
-    return self
-
   def __call__(self, x, y=None) -> Array:
     assert x.shape == self.input_shape
 
@@ -448,13 +432,177 @@ class Encoder(eqx.Module):
 
 ################################################################################################################
 
+class Decoder(eqx.Module):
+  """The other half of the Unet architecture to use as a decoder.  Input is a vector and output is an image.
+  """
+
+  input_shape: Tuple[int] = eqx.field(static=True)
+  dim: int = eqx.field(static=True)
+  output_shape: int = eqx.field(static=True)
+  dim_mults: Tuple[int] = eqx.field(static=True)
+  in_out: Tuple[Tuple[int, int]] = eqx.field(static=True)
+
+  middle_blocks: Tuple[Union[ImageResBlock, AttentionBlock]]
+  up_blocks: Tuple[Union[ImageResBlock, AttentionBlock, Upsample]]
+  final_block: ImageResBlock
+  proj_out: WeightNormConv
+
+  proj_in: WeightNormDense
+
+  cond_shape: Optional[Tuple[int]] = eqx.field(static=True)
+
+  def __init__(self,
+               input_size: int,
+               output_shape: Tuple[int],
+               dim: int = 16,
+               dim_mults: Tuple[int] = (1, 2, 4, 8),
+               resnet_block_groups: int = 8,
+               attn_heads: int = 4,
+               attn_dim_head: int = 32,
+               cond_shape: Optional[Tuple[int]] = None,
+               *,
+               key: PRNGKeyArray):
+    """**Arguments**:
+
+    - `input_shape`: The input shape.  Output size is the same as shape.
+    - `dim`: The dimension of the features
+    - `out_channels`: The number of output channels.  If None, then the same as the input.
+    - `dim_mults`: The dimension of the features at each downsampling
+    - `resnet_block_groups`: The number of resnet blocks per downsampling
+    - `attn_heads`: The number of attention heads per downsampling
+    - `attn_dim_head`: The dimension of the attention heads
+    - `freeu`: Whether to use freeu filtering
+    - `time_dependent`: Whether to use time conditioning
+    """
+
+    H, W, C = output_shape
+    if H//(2**len(dim_mults)) == 0:
+      raise ValueError(f"Image size {(H, W)} is too small for {len(dim_mults)} downsamples.")
+    self.input_shape = (input_size,)
+    self.output_shape = output_shape
+    self.dim = dim
+    self.dim_mults = dim_mults
+
+    keys = random.split(key, 20)
+    key_iter = iter(keys)
+
+    self.cond_shape = cond_shape
+    if cond_shape is not None:
+      assert len(cond_shape) == 1
+
+
+    def make_resblock(key, input_shape, dim_out):
+      return ImageResBlock(input_shape=input_shape,
+                           hidden_size=dim_out,
+                           out_size=dim_out,
+                           groups=resnet_block_groups,
+                           key=key)
+
+    def make_attention(key, input_shape, linear=True):
+      return AttentionBlock(input_shape=input_shape,
+                            heads=attn_heads,
+                            dim_head=attn_dim_head,
+                            key=key,
+                            use_linear_attention=linear)
+
+    dims = [self.dim*mult for mult in self.dim_mults]
+    self.in_out = list(zip(dims[:-1], dims[1:]))
+    keys = random.split(next(key_iter), len(self.in_out))
+    for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out)):
+      k1, k2 = random.split(key, 2)
+      assert H % 2 == 0
+      assert W % 2 == 0
+      H, W = H//2, W//2
+
+    # Input projection
+    self.proj_in = WeightNormDense(in_size=input_size,
+                                  out_size=(H*W*dims[-1]),
+                                  key=next(key_iter))
+
+    # Middle
+    middle_blocks = []
+    middle_blocks.append(make_resblock(next(key_iter), (H, W, dim_out), dim_out))
+    middle_blocks.append(make_attention(next(key_iter), (H, W, dim_out), linear=False))
+    middle_blocks.append(make_resblock(next(key_iter), (H, W, dim_out), dim_out))
+    self.middle_blocks = middle_blocks
+
+    # Upsampling
+    keys = random.split(next(key_iter), len(self.in_out))
+    up_blocks = []
+    for i, (key, (dim_in, dim_out)) in enumerate(zip(keys, self.in_out[::-1])):
+      k1, k2 = random.split(key, 2)
+
+      up = Upsample(input_shape=(H, W, dim_out),
+                    out_size=dim_in,
+                    key=key)
+      up_blocks.append(up)
+      H, W = H*2, W*2
+
+      # Skip connections contribute a dim_in
+      up_blocks.append(make_resblock(k1, (H, W, dim_in), dim_in))
+      up_blocks.append(make_resblock(k2, (H, W, dim_in), dim_in))
+      up_blocks.append(make_attention(key, (H, W, dim_in)))
+
+    self.up_blocks = up_blocks
+
+    # Final
+    self.final_block = make_resblock(next(key_iter), (H, W, dim_in), dim_in)
+    self.proj_out = WeightNormConv(input_shape=(H, W, dim_in),
+                                   out_size=C,
+                                   filter_shape=(1, 1),
+                                   key=next(key_iter))
+
+  def __call__(self, x, y=None) -> Array:
+    assert x.shape == self.input_shape
+
+    conditional_embedding = y
+
+    H, W, _ = self.output_shape
+    for i, (dim_in, dim_out) in enumerate(self.in_out):
+      assert H % 2 == 0
+      assert W % 2 == 0
+      H, W = H//2, W//2
+
+    # Input projection
+    h = self.proj_in(x)
+    h = h.reshape((H, W, -1))
+
+    # Middle
+    res_block1, attn_block, res_block2 = self.middle_blocks
+    h = res_block1(h)
+    h = attn_block(h)
+    h = res_block2(h)
+
+    # Upsampling
+    block_iter = iter(self.up_blocks)
+    for i, (dim_in, dim_out) in enumerate(self.in_out[::-1]):
+
+      # Upsample
+      h = next(block_iter)(h)
+
+      # Resnet block
+      h = next(block_iter)(h, conditional_embedding)
+
+      # Resnet block + attention_block
+      h = next(block_iter)(h, conditional_embedding)
+      h = next(block_iter)(h)
+
+    # Final
+    h = self.final_block(h, conditional_embedding)
+
+    h = self.proj_out(h)
+    return h
+
+################################################################################################################
+
 if __name__ == '__main__':
   from debug import *
   import matplotlib.pyplot as plt
   from generax.flows.base import Sequential
 
   key = random.PRNGKey(0)
-  dtype = jnp.bfloat16
+  # dtype = jnp.bfloat16
+  dtype = jnp.float32
   x = random.normal(key, shape=(10, 16, 16, 3), dtype=dtype)
   y = random.normal(key, (x.shape[0], 10), dtype=dtype)
   cond_shape = y.shape[1:]
@@ -465,19 +613,27 @@ if __name__ == '__main__':
   #                           key=key,
   #                           time_dependent=True,
   #                           cond_shape=cond_shape)
+
+
+  decoder = Decoder(input_shape=(16,),
+                    output_shape=(16, 16, 3),
+                    dim=16,
+                    key=key)
+
+
   layer = Encoder(input_shape=x.shape[1:],
                dim_mults=(1, 2, 4),
                key=key,
                out_size=16)
 
-  params, static = eqx.partition(layer, eqx.is_inexact_array)
-  params = jax.tree_util.tree_map(lambda x: x.astype(dtype), params)
-  layer = eqx.combine(params, static)
+  # params, static = eqx.partition(layer, eqx.is_inexact_array)
+  # params = jax.tree_util.tree_map(lambda x: x.astype(dtype), params)
+  # layer = eqx.combine(params, static)
 
 
-  t = random.uniform(key, shape=x.shape[:1], dtype=dtype)
-  # layer(util.unbatch(x))
-  layer(util.unbatch(t), util.unbatch(x))
+  z = layer(util.unbatch(x), util.unbatch(y))
+  x2 = decoder(z, util.unbatch(y))
+  import pdb; pdb.set_trace()
   # layer(util.unbatch(t), util.unbatch(x), util.unbatch(y))
 
   # out = eqx.filter_vmap(layer)(x)

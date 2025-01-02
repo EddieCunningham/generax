@@ -841,9 +841,11 @@ class TimeDependentRepeat(TimeDependentBijectiveTransform):
       x, log_det = block(t, x, y=y, inverse=inverse, **kwargs)
       return x, log_det
 
-    x, log_dets = jax.lax.scan(scan_body, x, dynamic, reverse=inverse)
-    return x, log_dets.sum()
+    if inverse:
+      dynamic = jax.tree_util.tree_map(lambda x: x[::-1], dynamic)
 
+    x, log_dets = eqx.internal.scan(scan_body, x, dynamic, kind='lax')
+    return x, log_dets.sum()
 
 ################################################################################################################
 

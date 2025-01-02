@@ -9,6 +9,7 @@ import generax.util.misc as misc
 import matplotlib.pyplot as plt
 import generax.util as util
 import equinox as eqx
+import generax as gx
 
 import torch
 from torch.utils.data import Dataset, DataLoader, RandomSampler
@@ -26,15 +27,19 @@ def get_dataset_iter(dtype=jnp.bfloat16):
   )
 
   random_sampler = RandomSampler(training_data, replacement=True)
-  train_dataloader = DataLoader(training_data, batch_size=256, sampler=random_sampler, drop_last=True)
+  train_dataloader = DataLoader(training_data, batch_size=128, sampler=random_sampler, drop_last=True)
 
   def get_train_ds() -> Iterator[Mapping[str, Array]]:
     train_iter = iter(train_dataloader)
+    key = random.PRNGKey(0)
     while True:
       for batch in train_dataloader:
         images, labels = batch
         x = images.numpy().transpose(0, 2, 3, 1).astype(dtype)
-        yield dict(x=x)
+        key, _ = random.split(key)
+        noise = random.uniform(key, shape=x.shape)/256.0
+        yield dict(x=x + noise)
+
 
   train_ds = get_train_ds()
   return train_ds
@@ -58,8 +63,10 @@ if __name__ == '__main__':
 
   # Construct the neural network that learn the score
   net = UNet(input_shape=x_shape,
-                          dim=256,
-                          dim_mults=[1, 2, 4, 8],
+                          # dim=256,
+                          # dim_mults=[1, 2, 4, 8],
+                          dim=32,
+                          dim_mults=[1, 2],
                           resnet_block_groups=8,
                           attn_heads=4,
                           attn_dim_head=32,
@@ -119,33 +126,21 @@ if __name__ == '__main__':
 
   print(f'Number of parameters: {num_params}')
 
-  # Create the optimizer
-  import optax
-  schedule = optax.warmup_cosine_decay_schedule(init_value=0.0,
-                                    peak_value=1.0,
-                                    warmup_steps=1000,
-                                    decay_steps=3e5,
-                                    end_value=0.1,
-                                    exponent=1.0)
-  chain = []
-  chain.append(optax.clip_by_global_norm(15.0))
-  chain.append(optax.adamw(3e-4))
-  chain.append(optax.scale_by_schedule(schedule))
-  optimizer = optax.chain(*chain)
-
   # Create the trainer and optimize
   trainer = Trainer(checkpoint_path='tmp/cifar10/')
   flow = trainer.train(model=flow,
                       objective=loss,
                       evaluate_model=lambda x: x,
-                      optimizer=optimizer,
+                      optimizer=gx.default_optimizer(lr=3e-4,
+                                                     clip_norm=15.0,
+                                                     warmup=1000),
                       num_steps=int(1e6),
-                      double_batch=100,
+                      double_batch=-1,
                       data_iterator=train_ds,
                       checkpoint_every=5000,
                       test_every=-1,
-                      retrain=False,
-                      just_load=True)
+                      retrain=True,
+                      just_load=False)
 
   # Pull samples from the model
   keys = random.split(key, 64)

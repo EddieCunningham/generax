@@ -54,7 +54,7 @@ def dict_to_csv(data_dict, filename):
         # Write the rows for each timestep
         writer.writerows(transposed_data)
 
-def csv_to_dict(filename):
+def csv_to_dict(filename, to_array=False):
     """
     Reads a CSV file and converts it to a dictionary with metric names as keys and 1D numpy arrays as values.
 
@@ -74,7 +74,8 @@ def csv_to_dict(filename):
                 data_dict[header].append(float(value))  # Convert values to float
 
     # Convert lists to numpy arrays
-    for key in data_dict.keys():
-        data_dict[key] = jnp.array(data_dict[key])
+    if to_array:
+      for key in data_dict.keys():
+          data_dict[key] = jnp.array(data_dict[key])
 
     return data_dict

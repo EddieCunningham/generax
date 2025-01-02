@@ -67,12 +67,13 @@ class WeightNormDense(eqx.Module):
     W = self.W*jax.lax.rsqrt((self.W**2).sum(axis=1))[:, None]
     x = jnp.einsum('ij,bj->bi', W, x)
 
-    std = jnp.std(x.reshape((-1, x.shape[-1])), axis=0) + 1e-5
+    std = jnp.std(x.reshape((-1, x.shape[-1]))) + 1e-5
 
     if before_square_plus:
       std = std - 1/std
 
     g = 1/std
+    assert g.shape == ()
 
     x *= g
 
@@ -151,12 +152,13 @@ class WeightNormConv(eqx.Module):
     W = self.W*jax.lax.rsqrt((self.W**2).sum(axis=(0, 1, 2)))[None,None,None,:]
     x = util.conv(W, x, stride=self.stride, padding=self.padding)
 
-    std = jnp.std(x.reshape((-1, x.shape[-1])), axis=0) + 1e-5
+    std = jnp.std(x.reshape((-1, x.shape[-1]))) + 1e-5
 
     if before_square_plus:
       std = std - 1/std
 
     g = 1/std
+    assert g.shape == ()
 
     x *= g
 

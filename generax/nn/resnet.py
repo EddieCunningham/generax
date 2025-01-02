@@ -88,8 +88,8 @@ class ResNet(eqx.Module):
                                         filter_shape=filter_shape,
                                         groups=1,
                                         key=k1)
-      working_shape = (H, W, working_size)
       groups = 1 if groups is None else groups
+      working_shape = (H, W, working_size)
 
     def make_resblock(k):
       return GatedResBlock(input_shape=working_shape,
@@ -213,6 +213,7 @@ class TimeDependentResNet(ResNet):
                out_size: int,
                n_blocks: int,
                filter_shape: Optional[Tuple[int]] = (3, 3),
+               groups: int = None,
                cond_shape: Optional[Tuple[int]] = None,
                activation: Callable = jax.nn.swish,
                embedding_size: Optional[int] = 16,
@@ -238,6 +239,7 @@ class TimeDependentResNet(ResNet):
                      out_size=out_size,
                      n_blocks=n_blocks,
                      filter_shape=filter_shape,
+                     groups=groups,
                      cond_shape=(total_cond_size,),
                      activation=activation,
                      key=k2,
@@ -271,6 +273,7 @@ class TimeDependentResNet(ResNet):
                x: Array,
                y: Optional[Array] = None,
                **kwargs) -> Array:
+    t = jnp.array(t)
     assert t.shape == ()
 
     h = self.time_features(t)

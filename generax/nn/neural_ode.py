@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 import diffrax
 from jaxtyping import Array, PRNGKeyArray
 from dataclasses import fields
-from diffrax.solution import Solution
+from diffrax import Solution
 
 __all__ = ['NeuralODE']
 
@@ -77,8 +77,8 @@ class NeuralODE(eqx.Module):
                trace_estimate_likelihood: Optional[bool] = False,
                save_at: Optional[Array] = None,
                key: Optional[PRNGKeyArray] = None,
-               t0: Optional[float] = 0.0,
-               t1: Optional[float] = 1.0) -> Array:
+               t0: Optional[float] = jnp.array(0.0),
+               t1: Optional[float] = jnp.array(1.0)) -> Array:
     """**Arguemnts**:
 
     - `x`: The input to the neural ODE.  Must be a rank 1 array.
