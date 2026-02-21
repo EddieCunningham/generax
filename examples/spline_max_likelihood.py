@@ -51,6 +51,7 @@ if __name__ == '__main__':
                   hidden_size=32,
                   working_size=16,
                   n_spline_knots=8)
+  flow = flow.data_dependent_init(x, key=key)
 
   # Construct the loss function
   def loss(flow, data, key):
@@ -92,8 +93,14 @@ if __name__ == '__main__':
   keys = random.split(key, 1000)
   samples = eqx.filter_vmap(flow.sample)(keys)
 
-  fig, ax = plt.subplots(1, 1)
-  ax.scatter(*samples.T)
-  plt.savefig('examples/spline_ml_samples.png')
-  # plt.show()
-  import pdb; pdb.set_trace()
+  fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+  axes[0].scatter(x[:, 0], x[:, 1], s=2, alpha=0.25, color='tab:blue')
+  axes[0].set_title('Training data')
+  axes[1].scatter(samples[:, 0], samples[:, 1], s=3, alpha=0.35, color='tab:orange')
+  axes[1].set_title('Flow samples')
+  for ax in axes:
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_aspect('equal')
+  plt.tight_layout()
+  plt.savefig('examples/spline_ml_samples.png', dpi=200, bbox_inches='tight')

@@ -13,7 +13,7 @@ __all__ = ['JointCoupling',
            'OTTCoupling']
 
 class JointCoupling(eqx.Module, ABC):
-  """Given two batches of samples from two distributions, this
+  r"""Given two batches of samples from two distributions, this
   will compute a discrete distribution as done in [multisample flow matching](https://arxiv.org/pdf/2304.14772.pdf)
 
   $$q(x_0,x_1) = \sum_{i,j}\pi_{i,j}\delta(x_0 - x_0^i)\delta(x_1 - x_1^j))$$
@@ -39,7 +39,7 @@ class JointCoupling(eqx.Module, ABC):
 
   @abstractmethod
   def compute_logits(self):
-    """Compute $\log \pi_{i,j}$"""
+    r"""Compute $\log \pi_{i,j}$"""
     pass
 
   def sample_x0_given_x1(self, rng_key: PRNGKeyArray) -> Array:

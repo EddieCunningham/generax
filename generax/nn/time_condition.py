@@ -55,7 +55,7 @@ class TimeFeatures(eqx.Module):
   projection: GaussianFourierProjection
   W1: Array
   W2: Array
-  activation: Callable
+  activation: Callable = eqx.field(static=True)
 
   def __init__(self,
                embedding_size: Optional[int] = 16,
